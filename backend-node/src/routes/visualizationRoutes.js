@@ -1,5 +1,5 @@
 import express from "express";
-import { getVisualization, getCleanedData, getChartData, getCleanedDatasets } from "../controllers/visualizationController.js";
+import { getVisualization, getChartData, getCleanedDatasets } from "../controllers/visualizationController.js";
 import { protect } from "../middleware/protect.js";
 import { logVisualizationActivity } from "../controllers/activityController.js";
 import { pool } from "../config/db.js";
@@ -47,7 +47,7 @@ router.get(
   getVisualization
 );
 
-router.get("/cleaned-data/:id", protect, getCleanedData);
+
 router.post("/chart-data/:id", protect, getChartData);
 router.get("/cleaned-datasets", protect, getCleanedDatasets);
 

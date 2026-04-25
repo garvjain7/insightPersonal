@@ -405,8 +405,12 @@ export const initCleaningWorkspace = async (req, res) => {
  */
 export const previewCleaningStep = async (req, res) => {
   const datasetId = req.params.id;
-  const { step, mode = "preview", config = {} } = req.body;
+  const { step, mode = "preview", config = {}, is_ai } = req.body;
   const userEmail = req.user?.email;
+  
+  if (is_ai) {
+    config.ai = true;
+  }
 
   if (!step || step < 1 || step > 5) {
     return res.status(400).json({ success: false, message: "step must be 1-5" });

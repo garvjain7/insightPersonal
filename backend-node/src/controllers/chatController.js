@@ -4,6 +4,7 @@ import { pool } from "../config/db.js";
 import { validateDatasetAccess, getDatasetPaths } from "../utils/accessUtils.js";
 import fs from "fs/promises";
 import { logActivity, logChatActivity, logPermissionActivity } from "./activityController.js";
+import { callChatbotRunner } from "../services/chatbotService.js";
 
 
 export const askQuestion = async (req, res) => {
@@ -60,94 +61,58 @@ export const askQuestion = async (req, res) => {
       });
     }
 
-    // 3. Spawn Python Cognitive Engine — pass explicit csv_file and granular permissions
-    const pythonScript = path.resolve(process.cwd(), "..", "ml_engine", "pipeline", "cognitive_engine.py");
-
-    const pyProcess = spawn("python", [
-      pythonScript,
-      "--user_id",    userEmail,
-      "--dataset_id", datasetId,
-      "--question",   queryText,
-      "--dataset_dir", path.dirname(csvFilePath),
-      "--csv_file",   csvFilePath,
-      "--permissions", JSON.stringify(granularPerms)
-    ]);
-    
+    // 3. Call integrated chatbot engine
+    // The chatbot_runner.py handles: dataset loading, RAG, intent, SQL generation, execution, and response
     const startTimeMs = Date.now();
 
-    let stdout = "";
-    let stderr = "";
-    pyProcess.stdout.on("data", (data) => (stdout += data.toString()));
-    pyProcess.stderr.on("data", (data) => (stderr += data.toString()));
+    try {
+      const result = await callChatbotRunner({
+        sessionId: `user_${user.user_id}_${datasetId}`,  // Unique session per user+dataset
+        datasetId: datasetId,
+        question: queryText,
+      });
 
-    pyProcess.on("close", async (code) => {
-      if (stderr) console.warn(`[query_engine stderr]: ${stderr}`);
-      if (code !== 0) {
-        console.error(`[query_engine] exited with code ${code}`);
-        return res.json({ success: true, source: "fallback", answer: "The query engine encountered an error. Please try rephrasing your question." });
-      }
+      const duration = Date.now() - startTimeMs;
+
+      // Log query to database
       try {
-        const result = JSON.parse(stdout.trim());
-        const duration = Date.now() - startTimeMs;
-        
-        // Log deep AI query metrics into query_logs
-        try {
-          await pool.query(
-            "INSERT INTO query_logs (company_id, user_id, dataset_id, query_text, query_type, execution_time_ms, status, generated_code, error_msg) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)",
-            [
-              user.company_id || null, 
-              user.user_id, 
-              datasetId, 
-              queryText, 
-              result.intent || 'unknown',
-              duration,
-              result.success === false ? "failed" : "success",
-              result.generated_code || null,
-              result.error || null
-            ]
-          );
-        } catch (dbErr) {
-          console.error("Could not log deep AI query to query_logs:", dbErr);
-        }
-        
-        // Handle permission requests dynamically returned by python LLM
-        if (result.success === false && result.require_permission) {
-          // Log Permission Denied
-          const dsNameRes = await pool.query("SELECT dataset_name FROM datasets WHERE dataset_id = $1", [datasetId]);
-          const dsName = dsNameRes.rows[0]?.dataset_name || "Unknown Dataset";
-          
-          await logPermissionActivity(
+        await pool.query(
+          "INSERT INTO query_logs (company_id, user_id, dataset_id, query_text, query_type, execution_time_ms, status, generated_code, error_msg) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)",
+          [
+            user.company_id || null,
             user.user_id,
-            user.full_name,
-            userEmail,
             datasetId,
-            dsName,
-            "PERM_DENIED",
-            `User denied ${result.require_permission} on ${dsName} (Intent: ${result.intent})`
-          );
-
-          return res.json({
-            success: false,
-            require_permission: result.require_permission,
-            answer: result.answer,
-            intent: result.intent
-          });
-        }
-
-
-        return res.json({
-          success: true,
-          source: result.fallback_used ? "ml-engine-fallback" : "ml-engine",
-          answer: result.answer || "I couldn't find an answer.",
-          intent: result.intent,
-          confidence: result.confidence,
-          suggested_questions: result.suggested_questions || []
-        });
-      } catch {
-        // Raw text response (shouldn't happen, but handle gracefully)
-        return res.json({ success: true, source: "ml-engine-raw", answer: stdout.trim() });
+            queryText,
+            result.intent || 'unknown',
+            duration,
+            result.success === false ? "failed" : "success",
+            null,  // SQL code not returned by chatbot_runner
+            result.error || null
+          ]
+        );
+      } catch (dbErr) {
+        console.error("Could not log query to query_logs:", dbErr);
       }
-    });
+
+      // Return response
+      return res.json({
+        success: result.success !== false,
+        source: "ml-engine-chatbot",
+        answer: result.answer || "I couldn't find an answer.",
+        intent: result.intent,
+        confidence: result.confidence || 0,
+        suggested_questions: result.suggested_questions || []
+      });
+
+    } catch (err) {
+      console.error("Chatbot runner error:", err);
+      return res.json({
+        success: false,
+        source: "error",
+        answer: "The chatbot encountered an error. Please try rephrasing your question.",
+        error: err.message
+      });
+    }
 
   } catch (err) {
     console.error("askQuestion error:", err);

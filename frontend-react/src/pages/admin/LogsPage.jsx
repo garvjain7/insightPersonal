@@ -142,15 +142,15 @@ export default function LogsPage() {
     setDatasetFilter('all');
   };
 
-  const userOptions = ['All', ...users.map(u => u.user_name).filter(Boolean)];
-  const eventOptions = ['all', ...events];
+  const userOptions = ['All', ...new Set(users.map(u => u.user_name).filter(Boolean))];
+  const eventOptions = ['all', ...new Set(events)];
   const statusOptions = [
     { value: 'all', label: 'All Status' },
     { value: 'ok', label: 'Completed' },
     { value: 'pending', label: 'Pending' },
     { value: 'failed', label: 'Failed' }
   ];
-  const datasetOptions = ['all', ...datasets.map(d => d.dataset_name).filter(Boolean)];
+  const datasetOptions = ['all', ...new Set(datasets.map(d => d.dataset_name).filter(Boolean))];
 
   const totalLogins = logs.filter(l => l.event_type === 'LOGIN').length;
   const totalCleans = logs.filter(l => l.event_type === 'CLEAN_DONE' || l.event_type === 'CLEAN_START' || l.event_type === 'CLEAN').length;

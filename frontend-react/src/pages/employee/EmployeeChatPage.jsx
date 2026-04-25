@@ -331,12 +331,51 @@ const EmployeeChatPage = () => {
 
   return (
     <EmployeeLayout>
-      <div style={{ display: 'flex', flex: 1, overflow: 'hidden' }}>
+      <div className="emp-topbar">
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+          <div style={{ width: 32, height: 32, borderRadius: 8, background: 'rgba(88,166,255,0.1)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+            <Bot size={18} color="var(--primary)" />
+          </div>
+          <div>
+            <div className="emp-topbar-title">AI Data Assistant</div>
+            <div className="emp-topbar-sub">Chat & explore your data assets</div>
+          </div>
+        </div>
+        <div className="emp-topbar-actions">
+          {availableDatasets.length > 0 && (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <span style={{ fontSize: 10, color: 'var(--text-muted)', fontWeight: 600, letterSpacing: 0.5 }}>ACTIVE:</span>
+              <select className="emp-filter-select" value={selectedDataset?.dataset_id || ''}
+                onChange={(e) => {
+                  const ds = availableDatasets.find(d => d.dataset_id === e.target.value);
+                  if (ds) {
+                    setSelectedDataset(ds);
+                    setDatasetInfo(null);
+                    fetchDatasetInfo(ds.dataset_id);
+                    setMessages([{ id: 0, role: 'ai', content: `👋 Switched to **${ds.name}**. Ask me about **totals**, **trends**, **top performers**, or anything about your data!`, time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) }]);
+                    msgId.current = 1;
+                  }
+                }} style={{ minWidth: 180, fontSize: 11 }}>
+                {availableDatasets.map(ds => <option key={ds.dataset_id} value={ds.dataset_id}>{ds.name}</option>)}
+              </select>
+            </div>
+          )}
+          <button className="emp-btn emp-btn-ghost emp-btn-sm" onClick={clearChat}>
+            <Trash2 size={14} /> Clear Chat
+          </button>
+        </div>
+      </div>
+
+      <div className="emp-content" style={{ display: 'flex', height: 'calc(100vh - 180px)', gap: 16, margin: 0, padding: 0, overflow: 'hidden' }}>
         {/* Context Panel */}
-        <div style={{ width: 260, background: 'rgba(22,27,34,0.7)', borderRight: '1px solid var(--border-color)', display: 'flex', flexDirection: 'column', flexShrink: 0, overflow: 'hidden' }}>
+        <div style={{ 
+          width: 260, background: 'rgba(22,27,34,0.4)', borderRight: '1px solid var(--border-color)', 
+          display: 'flex', flexDirection: 'column', flexShrink: 0, overflow: 'hidden', 
+          borderRadius: '12px 0 0 12px', border: '1px solid var(--border-color)' 
+        }}>
           <div style={{ padding: '16px 16px 12px', borderBottom: '1px solid var(--border-color)' }}>
-            <div style={{ fontSize: 14, fontWeight: 600, color: '#fff', marginBottom: 2 }}>Dataset Context</div>
-            <div style={{ fontFamily: "'DM Mono', monospace", fontSize: 9, color: 'var(--text-muted)' }}>Active for this session</div>
+            <div style={{ fontSize: 13, fontWeight: 600, color: '#fff', marginBottom: 2 }}>Dataset Context</div>
+            <div style={{ fontFamily: "'DM Mono', monospace", fontSize: 9, color: 'var(--text-muted)' }}>Metadata & Quick Stats</div>
           </div>
           <div style={{ flex: 1, overflowY: 'auto', padding: 14 }}>
             {/* Dataset Info — Live from API */}
@@ -423,36 +462,18 @@ const EmployeeChatPage = () => {
 
         {/* Chat Main */}
         <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
-          {/* Chat Topbar */}
+          {/* Chat Header Area */}
           <div style={{
-            padding: '14px 20px', background: 'rgba(13,17,23,0.8)', backdropFilter: 'blur(12px)',
+            padding: '12px 20px', background: 'rgba(13,17,23,0.4)',
             borderBottom: '1px solid var(--border-color)', display: 'flex', alignItems: 'center', gap: 12, flexShrink: 0,
           }}>
-            <div style={{ fontSize: 20 }}>◎</div>
             <div style={{ flex: 1 }}>
-              <div style={{ fontSize: 15, fontWeight: 600, color: '#fff' }}>DataInsights Chatbot</div>
-              {availableDatasets.length > 1 ? (
-                <select className="emp-filter-select" value={selectedDataset?.dataset_id || ''}
-                  onChange={(e) => {
-                    const ds = availableDatasets.find(d => d.dataset_id === e.target.value);
-                    if (ds) {
-                      setSelectedDataset(ds);
-                      setDatasetInfo(null);
-                      fetchDatasetInfo(ds.dataset_id);
-                      setMessages([{ id: 0, role: 'ai', content: `👋 Switched to **${ds.name}**. Ask me about **totals**, **trends**, **top performers**, or anything about your data!`, time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) }]);
-                      msgId.current = 1;
-                    }
-                  }} style={{ marginTop: 4, fontSize: 10, minWidth: 150 }}>
-                  {availableDatasets.map(ds => <option key={ds.dataset_id} value={ds.dataset_id}>{ds.name}</option>)}
-                </select>
-              ) : (
-                <div style={{ fontFamily: "'DM Mono', monospace", fontSize: 9, color: 'var(--text-muted)', marginTop: 2 }}>
-                  {selectedDataset?.name || 'No dataset selected'}
-                </div>
-              )}
+              <div style={{ fontSize: 13, fontWeight: 600, color: '#fff' }}>{selectedDataset?.name || 'No Dataset Selected'}</div>
+              <div style={{ fontFamily: "'DM Mono', monospace", fontSize: 9, color: 'var(--text-muted)', marginTop: 2 }}>
+                {datasetInfo ? `${datasetInfo.totalRows.toLocaleString()} rows · ${datasetInfo.headers.length} columns` : 'Select a dataset to begin chat'}
+              </div>
             </div>
             <div style={{ display: 'flex', gap: 8 }}>
-              <button className="emp-btn emp-btn-ghost emp-btn-sm" onClick={clearChat}><Trash2 size={12} /> Clear</button>
               <button className="emp-btn emp-btn-ghost emp-btn-sm" onClick={() => navigate('/employee/dashboard')}><LayoutDashboard size={12} /> Dashboard</button>
             </div>
           </div>

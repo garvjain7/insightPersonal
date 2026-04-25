@@ -1,15 +1,15 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import './EmployeeCleaningPage.css';
-import { getDatasetPreview, finalizeDataset, pauseCleaning, downloadDataset, initCleaningWorkspace, getCleaningState, previewCleaningStep, applyCleaningStep } from '../../services/api';
+import { getDatasetPreview, finalizeDataset, pauseCleaning, initCleaningWorkspace, getCleaningState, previewCleaningStep, applyCleaningStep, downloadDataset } from '../../services/api';
 
 
 const STEPS = [
-  { id: 1, name: 'Null Values', shortName: 'Null Values' },
-  { id: 2, name: 'Duplicates', shortName: 'Duplicates' },
-  { id: 3, name: 'Data Types', shortName: 'Data Types' },
-  { id: 4, name: 'Outliers', shortName: 'Outliers' },
-  { id: 5, name: 'Feature Eng.', shortName: 'Feature Eng.' },
+  { id: 1, name: 'Null Values', shortName: 'Null Values', statusKey: 'null_values' },
+  { id: 2, name: 'Duplicates', shortName: 'Duplicates', statusKey: 'duplicates' },
+  { id: 3, name: 'Data Types', shortName: 'Data Types', statusKey: 'data_types' },
+  { id: 4, name: 'Outliers', shortName: 'Outliers', statusKey: 'outliers' },
+  { id: 5, name: 'Feature Eng.', shortName: 'Feature Eng.', statusKey: 'feature_engineering' },
 ];
 
 const NULL_STRATEGIES = ['Keep as-is', 'Fill with 0', 'Fill with mean', 'Fill with median', 'Fill with mode', 'Drop rows'];
@@ -34,12 +34,13 @@ const EmployeeCleaningPage = () => {
   const [loading, setLoading] = useState(true);
   
   const [tableRows, setTableRows] = useState([]);
-  const [cleanedRows, setCleanedRows] = useState([]);
   const [tableHeaders, setTableHeaders] = useState([]);
   
   const [settings, setSettings] = useState({
     1: {}, 2: { strategy: 'Keep first' }, 3: {}, 4: {}, 5: {}
   });
+
+  const [cleaningState, setCleaningState] = useState(null);
 
   const [leftWidth, setLeftWidth] = useState(68);
   const [dragging, setDragging] = useState(false);
@@ -59,296 +60,126 @@ const EmployeeCleaningPage = () => {
   const [error, setError] = useState(null);
   const [page, setPage] = useState(1);
   const [totalRows, setTotalRows] = useState(0);
+  const [colFilter, setColFilter] = useState('all');
   const [rawStats, setRawStats] = useState({
     totalRows: 0,
     totalNulls: 0,
     totalDuplicates: 0,
-    columnNulls: {}
+    totalOutliers: 0,
+    columnNulls: {},
+    columns: [],
+    numericColumns: [],
   });
-  const [colFilter, setColFilter] = useState('all');
 
-  const normalizeFeatureName = (value = '') =>
-    String(value).toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '');
+  // Ref to suppress the live-preview useEffect when an explicit action
+  // (Skip / Let AI Decide) is already running its own preview.
+  const suppressLivePreview = useRef(false);
 
-  const isNumericLikeColumn = (rows, col, minCount = 5) => {
-    const sampleVals = rows.slice(0, 20).map(r => parseFloat(r[col])).filter(v => !isNaN(v));
-    return sampleVals.length > minCount;
-  };
 
-  const getNumericColumns = (headers, rows) => headers.filter(col => isNumericLikeColumn(rows, col));
-
-  const buildFeatureSuggestions = (headers, rows) => {
-    const suggestions = [];
-    const numericCols = getNumericColumns(headers, rows);
-    const addSuggestion = (feature) => {
-      if (!feature?.col || suggestions.some(existing => existing.col === feature.col)) return;
-      suggestions.push(feature);
-    };
-
-    const findColumn = (tokens, requireNumeric = false) => {
-      const searchIn = requireNumeric ? numericCols : headers;
-      return searchIn.find((col) => {
-        const normalized = normalizeFeatureName(col);
-        return tokens.some((token) => normalized.includes(token));
-      });
-    };
-
-    const slug = (value) => normalizeFeatureName(value || 'feature');
-
-    const lengthCol = findColumn(['length', 'len'], true);
-    const widthCol = findColumn(['width', 'breadth', 'wid'], true);
-    const heightCol = findColumn(['height', 'depth', 'ht'], true);
-    const salesCol = findColumn(['sales'], true);
-    const quantityCol = findColumn(['quantity'], true);
-    const profitCol = findColumn(['profit'], true);
-    const discountCol = findColumn(['discount'], true);
-
-    if (lengthCol && widthCol) {
-      addSuggestion({
-        id: suggestions.length,
-        originalCol: lengthCol,
-        inputs: [lengthCol, widthCol],
-        col: `area_${slug(lengthCol)}_${slug(widthCol)}`,
-        type: 'derived',
-        operation: 'product',
-        formula: `${lengthCol} x ${widthCol}`,
-        desc: 'Creates an area-style feature from the two dimension columns.',
-      });
+  const fetchData = async () => {
+    if (!dsId) {
+      setLoading(false);
+      return;
     }
+    setLoading(true);
+    setError(null);
+    try {
+      // 1. Get current cleaning state
+      const stateRes = await getCleaningState(dsId);
+      if (stateRes.success) {
+        setCleaningState(stateRes.state || null);
+        
+        if (stateRes.state?.current_step) {
+          const sIdx = STEPS.findIndex(s => s.statusKey === stateRes.state.current_step);
+          if (sIdx !== -1) setCurrentStep(sIdx + 1);
+        }
 
-    if (lengthCol && widthCol && heightCol) {
-      addSuggestion({
-        id: suggestions.length,
-        originalCol: lengthCol,
-        inputs: [lengthCol, widthCol, heightCol],
-        col: `volume_${slug(lengthCol)}_${slug(widthCol)}_${slug(heightCol)}`,
-        type: 'derived',
-        operation: 'product',
-        formula: `${lengthCol} x ${widthCol} x ${heightCol}`,
-        desc: 'Creates a volume-style feature from the three dimension columns.',
-      });
-    }
+        if (stateRes.metadata) {
+          const newSettings = { ...settings };
+          STEPS.forEach((s, i) => {
+            if (stateRes.metadata[s.statusKey]?.params) {
+              newSettings[i + 1] = stateRes.metadata[s.statusKey].params;
+            }
+          });
+          setSettings(newSettings);
+        }
 
-    if (salesCol && quantityCol) {
-      addSuggestion({
-        id: suggestions.length,
-        originalCol: salesCol,
-        inputs: [salesCol, quantityCol],
-        col: `sales_per_${slug(quantityCol)}`,
-        type: 'derived',
-        operation: 'ratio',
-        formula: `${salesCol} / ${quantityCol}`,
-        desc: 'Creates a per-unit sales feature from sales and quantity.',
-      });
-    }
-
-    if (profitCol && salesCol) {
-      addSuggestion({
-        id: suggestions.length,
-        originalCol: profitCol,
-        inputs: [profitCol, salesCol],
-        col: `profit_margin`,
-        type: 'derived',
-        operation: 'ratio',
-        formula: `${profitCol} / ${salesCol}`,
-        desc: 'Creates a profit margin style feature.',
-      });
-    }
-
-    if (discountCol && salesCol) {
-      addSuggestion({
-        id: suggestions.length,
-        originalCol: discountCol,
-        inputs: [discountCol, salesCol],
-        col: `discount_rate`,
-        type: 'derived',
-        operation: 'ratio',
-        formula: `${discountCol} / ${salesCol}`,
-        desc: 'Creates a discount rate feature relative to sales.',
-      });
-    }
-
-    const skewedNumericCols = numericCols
-      .map((col) => {
-        const values = rows.map(r => parseFloat(r[col])).filter(v => !isNaN(v) && v >= 0);
-        if (values.length < 8) return null;
-        const sorted = [...values].sort((a, b) => a - b);
-        const median = sorted[Math.floor(sorted.length / 2)] || 0;
-        const max = Math.max(...values);
-        return { col, median, max };
-      })
-      .filter(Boolean)
-      .filter(({ max, median }) => median > 0 && max > median * 5)
-      .sort((a, b) => (b.max / (b.median || 1)) - (a.max / (a.median || 1)));
-
-    skewedNumericCols.slice(0, 2).forEach(({ col }) => {
-      addSuggestion({
-        id: suggestions.length,
-        originalCol: col,
-        inputs: [col],
-        col: `${slug(col)}_log`,
-        type: 'derived',
-        operation: 'log',
-        formula: `log1p(${col})`,
-        desc: 'Applies a log transform to stabilize a skewed numeric column.',
-      });
-    });
-
-    if (suggestions.length < 4) {
-      const fallbackNumeric = numericCols.find(col => !suggestions.some(s => s.inputs?.includes(col)));
-      if (fallbackNumeric) {
-        addSuggestion({
-          id: suggestions.length,
-          originalCol: fallbackNumeric,
-          inputs: [fallbackNumeric],
-          col: `${slug(fallbackNumeric)}_normalized`,
-          type: 'numeric',
-          operation: 'normalize',
-          formula: `${fallbackNumeric} / max`,
-          desc: `Scales ${fallbackNumeric} to a 0-1 range based on its max value.`,
-        });
+        if (stateRes.state?.stats) setRawStats(stateRes.state.stats);
+      } else if (!stateRes.initialised) {
+        await initCleaningWorkspace(dsId);
+        const newState = await getCleaningState(dsId);
+        if (newState.success) {
+          setCleaningState(newState.state);
+          if (newState.state?.stats) setRawStats(newState.state.stats);
+        }
       }
-    }
 
-    return suggestions.slice(0, 6);
-  };
+      // 2. Load preview (Source 'preview' if active_preview matches current step, else 'working')
+      const source = (stateRes.state?.active_preview === STEPS[currentStep - 1]?.statusKey) ? 'preview' : 'working';
+      const data = await getDatasetPreview(dsId, page, source);
 
-  const buildFeatureMeta = (rows, features) => {
-    const meta = {};
-    features.forEach((feat) => {
-      const operation = feat.operation || feat.kind || feat.type;
-      if (operation !== 'normalize' && operation !== 'numeric') return;
-      const sourceCol = feat.inputs?.[0] || feat.originalCol;
-      if (!sourceCol) return;
-      const values = rows.map(r => parseFloat(r[sourceCol])).filter(v => !isNaN(v));
-      const max = values.length > 0 ? Math.max(...values) : 1;
-      meta[feat.col || sourceCol] = max > 0 ? max : 1;
-    });
-    return meta;
-  };
-
-  const applyFeatureSuggestion = (row, feat, meta) => {
-    const operation = feat.operation || feat.kind || (feat.type === 'boolean' ? 'boolean_flag' : feat.type === 'numeric' ? 'normalize' : feat.type);
-    const inputs = Array.isArray(feat.inputs) && feat.inputs.length > 0
-      ? feat.inputs
-      : (feat.originalCol ? [feat.originalCol] : []);
-    const values = inputs.map((col) => {
-      const parsed = parseFloat(row[col]);
-      return Number.isNaN(parsed) ? 0 : parsed;
-    });
-
-    switch (operation) {
-      case 'normalize':
-      case 'numeric': {
-        const sourceCol = inputs[0];
-        const max = meta[feat.col || sourceCol] || 1;
-        const parsed = parseFloat(row[sourceCol]);
-        return Number.isNaN(parsed) ? 0 : Number((parsed / max).toFixed(4));
+      if (data.success) {
+        setTableRows(data.data || []);
+        setTotalRows(data.totalRows || 0);
+        if (data.currentStats) {
+          setRawStats(prev => ({
+            ...prev,
+            ...data.currentStats,
+            // Compute numeric columns from column_nulls keys — backend always returns this
+            numericColumns: (data.currentStats.numericColumns || prev.numericColumns),
+          }));
+        }
+        if (data.data?.length > 0) setTableHeaders(Object.keys(data.data[0]));
+      } else {
+        setError(data.message || "Failed to load dataset preview.");
       }
-      case 'boolean':
-      case 'boolean_flag':
-        return inputs.some((col) => row[col] != null && String(row[col]).trim() !== '') ? 1 : 0;
-      case 'product':
-        return values.reduce((acc, value) => acc * (Number.isNaN(value) ? 1 : value), 1);
-      case 'sum':
-        return values.reduce((acc, value) => acc + (Number.isNaN(value) ? 0 : value), 0);
-      case 'difference':
-        return (values[0] || 0) - (values[1] || 0);
-      case 'ratio': {
-        const numerator = values[0] || 0;
-        const denominator = values[1] || 0;
-        return denominator === 0 ? 0 : Number((numerator / denominator).toFixed(4));
-      }
-      case 'log': {
-        const parsed = values[0];
-        return Number.isNaN(parsed) ? 0 : Number(Math.log1p(Math.max(parsed, 0)).toFixed(4));
-      }
-      default: {
-        const sourceCol = inputs[0];
-        const val = row[sourceCol];
-        return val != null && String(val).trim() !== '' ? 1 : 0;
-      }
+    } catch (err) {
+      setError(err.message || "Failed to load data.");
+    } finally {
+      setLoading(false);
     }
   };
 
   useEffect(() => {
-    const fetchData = async () => {
-      if (!dsId) {
-        setLoading(false);
-        return;
-      }
-      setLoading(true);
-      setError(null);
-      try {
-        // Step 1: Check/init workspace
-        const stateRes = await getCleaningState(dsId);
-
-        if (!stateRes.success) {
-          throw new Error(stateRes.message || 'Failed to initialise cleaning workspace.');
-        }
-
-        if (!stateRes.initialised) {
-          const initRes = await initCleaningWorkspace(dsId);
-          if (!initRes.success) {
-            throw new Error(initRes.message || 'Failed to initialise cleaning workspace.');
-          }
-        }
-
-        // Step 2: Load preview
-        const data = await getDatasetPreview(dsId, page);
-
-        if (data.success) {
-          // ── Detect corrupt/empty working file from a broken previous session ──
-          // totalRows <= 1 means the file only has a header row (0 real data rows).
-          // Force a re-init to rebuild the working file from raw, then retry once.
-          if ((!data.data || data.data.length === 0) && (data.totalRows || 0) <= 1) {
-            await initCleaningWorkspace(dsId);
-            // Retry preview after re-init
-            const retryData = await getDatasetPreview(dsId, page, 'working');
-
-            if (retryData.success && retryData.data?.length > 0) {
-              setTableRows(retryData.data);
-              setCleanedRows(retryData.data);
-              setTotalRows(retryData.totalRows || 0);
-              if (retryData.currentStats || retryData.rawStats) setRawStats(retryData.currentStats || retryData.rawStats);
-              setTableHeaders(Object.keys(retryData.data[0]));
-            } else {
-              // Last resort: try reading raw source directly
-              const rawData = await getDatasetPreview(dsId, page, 'raw');
-              if (rawData.success && rawData.data?.length > 0) {
-                setTableRows(rawData.data);
-                setCleanedRows(rawData.data);
-                setTotalRows(rawData.totalRows || 0);
-                if (rawData.currentStats || rawData.rawStats) setRawStats(rawData.currentStats || rawData.rawStats);
-                setTableHeaders(Object.keys(rawData.data[0]));
-              } else {
-                setError('Dataset file appears to be empty or corrupted. Please re-upload the dataset.');
-              }
-            }
-            return;
-          }
-
-          setTableRows(data.data || []);
-          setCleanedRows(data.data || []);
-          setTotalRows(data.totalRows || 0);
-          if (data.currentStats || data.rawStats) {
-            setRawStats(data.currentStats || data.rawStats);
-          }
-          if (data.data?.length > 0) {
-            const headers = Object.keys(data.data[0]);
-            setTableHeaders(headers);
-          }
-        } else {
-          setError(data.message || "Failed to load dataset preview.");
-        }
-      } catch (err) {
-        setError(err.response?.data?.message || err.message || "Failed to load dataset data.");
-      } finally {
-        setLoading(false);
-      }
-    };
     fetchData();
   }, [dsId, page]);
+
+  const handlePreview = async (stepId, config, isAi = false, mode = 'preview') => {
+    if (!dsId) return;
+    setLoading(true);
+    try {
+      const res = await previewCleaningStep(dsId, stepId, config, isAi, mode);
+      if (res.success) {
+        // Refresh preview table data from 'preview' source
+        const previewData = await getDatasetPreview(dsId, 1, 'preview');
+        if (previewData.success) {
+          setTableRows(previewData.data || []);
+          setPage(1);
+          if (previewData.currentStats) setRawStats(previewData.currentStats);
+        }
+        
+        // Refresh cleaning state to get new 'previewed' status
+        const stateRes = await getCleaningState(dsId);
+        if (stateRes.success) {
+          setCleaningState(stateRes.state);
+
+        }
+
+        if (isAi && res.decisions) {
+          setSettings(prev => ({
+            ...prev,
+            [stepId]: { ...prev[stepId], ...res.decisions }
+          }));
+        }
+      } else {
+        setError(res.message || "Preview failed");
+      }
+    } catch (err) {
+      setError(err.message || "Preview error");
+    } finally {
+      setLoading(false);
+    }
+  };
 
   // Track page exit (Pause Logging)
   useEffect(() => {
@@ -378,252 +209,128 @@ const EmployeeCleaningPage = () => {
     };
   }, [dragging]);
 
-  // Process data based on settings
-  useEffect(() => {
-    let data = [...tableRows];
 
-    // STEP 1: Null Values
-    const s1 = settings[1] || {};
-    const colStats = {};
-    tableHeaders.forEach(col => {
-      const numericVals = tableRows.map(r => parseFloat(r[col])).filter(v => !isNaN(v));
-      if (numericVals.length > 0) {
-        const sorted = [...numericVals].sort((a, b) => a - b);
-        const sum = numericVals.reduce((a, b) => a + b, 0);
-        colStats[col] = {
-          mean: sum / numericVals.length,
-          median: numericVals.length % 2 === 0 
-            ? (sorted[numericVals.length / 2 - 1] + sorted[numericVals.length / 2]) / 2 
-            : sorted[Math.floor(numericVals.length / 2)],
-        };
-      }
-      const textVals = tableRows.map(r => r[col])?.filter(v => v != null && v !== '');
-      if (textVals?.length > 0) {
-        const freq = {};
-        textVals.forEach(v => { freq[v] = (freq[v] || 0) + 1; });
-        const mode = Object.entries(freq).sort((a, b) => b[1] - a[1])[0]?.[0];
-        colStats[col] = { ...colStats[col], mode };
-      }
-    });
 
-    data = data.map(row => {
-      let newRow = { ...row };
-      
-      // Remove white spaces automatically regardless of strategy
-      Object.keys(newRow).forEach(col => {
-        if (typeof newRow[col] === 'string') {
-          newRow[col] = newRow[col].trim();
-        }
-      });
-
-      let drop = false;
-      Object.entries(s1).forEach(([col, strategy]) => {
-        if (!strategy || strategy === 'Keep as-is') return;
-        const val = newRow[col];
-        if (val == null || val === '') {
-          if (strategy === 'Fill with 0') newRow[col] = 0;
-          else if (strategy === 'Fill with mean') newRow[col] = colStats[col]?.mean != null ? Math.round(colStats[col].mean * 100) / 100 : 0;
-          else if (strategy === 'Fill with median') newRow[col] = colStats[col]?.median != null ? Math.round(colStats[col].median * 100) / 100 : 0;
-          else if (strategy === 'Fill with mode') newRow[col] = colStats[col]?.mode || 'Unknown';
-          else if (strategy === 'Drop rows') drop = true;
-        }
-      });
-      return drop ? null : newRow;
-    }).filter(Boolean);
-
-    // STEP 2: Duplicates
-    const s2 = settings[2]?.strategy || 'Keep first';
-    if (s2 !== 'Keep as-is') {
-      const seen = new Set();
-      if (s2 === 'Keep first') {
-        data = data.filter(row => {
-          const key = JSON.stringify(row);
-          if (seen.has(key)) return false;
-          seen.add(key);
-          return true;
-        });
-      } else if (s2 === 'Keep last') {
-        const newCleaned = [];
-        for (let i = data.length - 1; i >= 0; i--) {
-          const row = data[i];
-          const key = JSON.stringify(row);
-          if (!seen.has(key)) {
-            seen.add(key);
-            newCleaned.unshift(row);
-          }
-        }
-        data = newCleaned;
-      }
-    }
-
-    // STEP 3: Data Types
-    const s3 = settings[3] || {};
-    data = data.map(row => {
-      const newRow = { ...row };
-      Object.entries(s3).forEach(([col, targetType]) => {
-        if (!targetType || targetType === 'Auto-detect') return;
-        const val = newRow[col];
-        if (targetType === 'Integer') {
-          const parsed = parseInt(val, 10);
-          newRow[col] = !isNaN(parsed) ? parsed : 0;
-        } else if (targetType === 'Float') {
-          const parsed = parseFloat(val);
-          newRow[col] = !isNaN(parsed) ? parsed : 0;
-        } else if (targetType === 'String') {
-          newRow[col] = String(val ?? '');
-        } else if (targetType === 'Boolean') {
-          newRow[col] = val && val !== '0' && String(val).toLowerCase() !== 'false' ? true : false;
-        } else if (targetType === 'Date') {
-          const date = new Date(val);
-          newRow[col] = !isNaN(date.getTime()) ? val : '';
-        }
-      });
-      return newRow;
-    });
-
-    // STEP 4: Outliers
-    const s4 = settings[4] || {};
-    const numericCols = tableHeaders.filter(col => {
-      const sampleVals = tableRows.slice(0, 20).map(r => parseFloat(r[col])).filter(v => !isNaN(v));
-      return sampleVals.length > 5;
-    });
-
-    numericCols.forEach(col => {
-      const strategy = s4[col];
-      if (!strategy || strategy === 'Keep as-is') return;
-
-      const vals = data.map(r => parseFloat(r[col])).filter(v => !isNaN(v));
-      if (vals.length === 0) return;
-
-      const sorted = [...vals].sort((a, b) => a - b);
-      const q1 = sorted[Math.floor(vals.length * 0.25)] || 0;
-      const q3 = sorted[Math.floor(vals.length * 0.75)] || 0;
-      const iqr = q3 - q1;
-      const lowerBound = q1 - 1.5 * iqr;
-      const upperBound = q3 + 1.5 * iqr;
-
-      if (strategy === 'Remove rows') {
-        data = data.filter(row => {
-          const val = parseFloat(row[col]);
-          if (!isNaN(val) && (val < lowerBound || val > upperBound)) return false;
-          return true;
-        });
-      } else if (strategy === 'IQR capping') {
-        data = data.map(row => {
-          const newRow = { ...row };
-          const val = parseFloat(row[col]);
-          if (!isNaN(val)) {
-            if (val < lowerBound) newRow[col] = lowerBound;
-            else if (val > upperBound) newRow[col] = upperBound;
-          }
-          return newRow;
-        });
-      }
-    });
-
-    // STEP 5: Feature Extraction
-    const acceptedFeatures = aiSuggestions.filter(s => featStatuses[s.id] === 'accept');
-    if (acceptedFeatures.length > 0) {
-      const meta = buildFeatureMeta(data, acceptedFeatures);
-
-      data = data.map(row => {
-        const newRow = { ...row };
-        acceptedFeatures.forEach(feat => {
-          const outputCol = feat.col || feat.newCol || feat.output;
-          if (!outputCol) return;
-          newRow[outputCol] = applyFeatureSuggestion(newRow, feat, meta);
-        });
-        return newRow;
-      });
-    }
-
-    setCleanedRows(data);
-  }, [settings, tableRows, tableHeaders, featStatuses, aiSuggestions]);
-
-  const handleTransformation = async (stepId, manualSettings = null) => {
+  const handleApplyFinal = async () => {
+    if (!dsId) return;
     setLoading(true);
-    setError(null);
-
-    const refreshPreview = async () => {
-      const previewRes = await getDatasetPreview(dsId, 1);
-      if (!previewRes.success) {
-        return false;
-      }
-
-      setPage(1);
-      setTableRows(previewRes.data || []);
-      setCleanedRows(previewRes.data || []);
-      setTableHeaders(previewRes.data?.length > 0 ? Object.keys(previewRes.data[0]) : []);
-      setTotalRows(previewRes.totalRows || 0);
-      if (previewRes.currentStats || previewRes.rawStats) {
-        setRawStats(previewRes.currentStats || previewRes.rawStats);
-      }
-      return true;
-    };
-
     try {
-      let transformConfig = {};
-      const activeSettings = manualSettings || settings[stepId];
-
-      if (stepId === 1) transformConfig = { type: 'null_fill', params: activeSettings };
-      else if (stepId === 2) transformConfig = { type: 'drop_duplicates', params: activeSettings };
-      else if (stepId === 3) transformConfig = { type: 'type_conversion', params: activeSettings };
-      else if (stepId === 4) transformConfig = { type: 'outlier_handling', params: activeSettings };
-      else if (stepId === 5) {
-        const acceptedFeatures = aiSuggestions.filter(s => featStatuses[s.id] === 'accept');
-        transformConfig = { type: 'feature_eng', params: { features: acceptedFeatures } };
-      }
-
-      const previewRes = await previewCleaningStep(dsId, stepId, transformConfig, false);
-      if (!previewRes.success) throw new Error(previewRes.message || "Backend preview error");
-
-      const applyRes = await applyCleaningStep(dsId, stepId);
-      if (!applyRes.success) throw new Error(applyRes.message || "Backend apply error");
-
-      const res = applyRes;
+      const res = await applyCleaningStep(dsId, currentStep);
       if (res.success) {
-        const previewLoaded = await refreshPreview();
-        if (previewLoaded) {
-          // Update current step to next after the file has been refreshed.
-          if (currentStep < 5) {
-            const nextS = currentStep + 1;
-            setCurrentStep(nextS);
-            if (nextS === 5 && !featDone && !featStreaming) startFeatStream();
-          } else {
-            setVerifyOpen(true);
-          }
+        if (currentStep < 5) {
+          // Increment step
+          const nextS = currentStep + 1;
+          setCurrentStep(nextS);
+          if (nextS === 5 && !featDone && !featStreaming) startFeatStream();
+        }
+        // On step 5: caller opens modal — don't auto-open here
+
+        // Refresh data from 'working' source
+        const workingData = await getDatasetPreview(dsId, 1, 'working');
+        if (workingData.success) {
+          setTableRows(workingData.data || []);
+          setPage(1);
+          if (workingData.currentStats) setRawStats(workingData.currentStats);
+        }
+
+        // Refresh cleaning state
+        const stateRes = await getCleaningState(dsId);
+        if (stateRes.success) {
+          setCleaningState(stateRes.state);
+
         }
       } else {
-        throw new Error(res.message || "Backend transformation error");
+        setError(res.message || "Apply failed");
       }
     } catch (err) {
-      setError(err.message || "Transformation failed. Please try a different strategy.");
-      // DO NOT reset Step to 1 here. Just refresh to show data hasn't changed.
-      await refreshPreview();
+      setError(err.message || "Apply error");
     } finally {
       setLoading(false);
     }
   };
 
-  const handleSkip = () => {
-    if (currentStep < 5) {
-      const nextS = currentStep + 1;
-      setCurrentStep(nextS);
-      if (nextS === 5 && !featDone && !featStreaming) startFeatStream();
-    } else {
-      setVerifyOpen(true);
-    }
+  const handleSkip = async () => {
+    suppressLivePreview.current = true;
+    await handlePreview(currentStep, {}, false, 'skip');
+    suppressLivePreview.current = false;
   };
 
   const handleLetAiDecide = async () => {
-    // 1. Generate AI settings for current step
-    const newSettings = handleAiDecide(); // This returns the settings for the current step
-    // 2. Apply them
-    await handleTransformation(currentStep, newSettings);
+    suppressLivePreview.current = true;
+    await handlePreview(currentStep, { ai: true }, true, 'preview');
+    suppressLivePreview.current = false;
   };
 
-  const handleApplyManual = async () => {
-    await handleTransformation(currentStep);
+  // Live preview for manual dropdown changes only
+  useEffect(() => {
+    if (suppressLivePreview.current) return;
+    const stepKey = STEPS[currentStep - 1]?.statusKey;
+    if (cleaningState?.steps?.[stepKey] === 'committed') return;
+    const config = { params: settings[currentStep] };
+    const timer = setTimeout(() => {
+      handlePreview(currentStep, config, false, 'preview');
+    }, 800);
+    return () => clearTimeout(timer);
+  }, [settings[currentStep]]);
+
+  // Build feature suggestions from column names + numeric columns
+  const buildFeatureSuggestions = (headers, numericCols) => {
+    const slug = (s) => s.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '');
+    const numericSet = new Set(numericCols || []);
+    const normalize = (s) => s.toLowerCase();
+    const isNumericHeader = (h) => numericSet.has(h);
+    const matchesToken = (header, tokens) => {
+      const key = normalize(header);
+      return tokens.some(token => new RegExp(`(^|[^a-z0-9])${token}([^a-z0-9]|$)`, 'i').test(key));
+    };
+    const isLikelyCategorical = (header) => /channel|rep|region|type|method|status|name|id|code/.test(normalize(header));
+    const find = (tokens, { numericOnly = false, excludeCategorical = false } = {}) => {
+      const candidates = headers.filter((h) => {
+        if (!matchesToken(h, tokens)) return false;
+        if (numericOnly && !isNumericHeader(h)) return false;
+        if (excludeCategorical && isLikelyCategorical(h)) return false;
+        return true;
+      });
+      if (candidates.length > 0) return candidates[0];
+      if (!numericOnly) {
+        const fallback = headers.find((h) => matchesToken(h, tokens));
+        if (fallback) return fallback;
+      }
+      return null;
+    };
+
+    const suggestions = [];
+    const seen = new Set();
+    const add = (s) => { if (!seen.has(s.col)) { seen.add(s.col); suggestions.push({ id: suggestions.length, ...s }); } };
+
+    const salesCol    = find(['sales_amount', 'sales', 'revenue', 'amount', 'total'], { numericOnly: true, excludeCategorical: true });
+    const quantityCol = find(['quantity', 'qty', 'units', 'count'], { numericOnly: true });
+    const profitCol   = find(['profit', 'margin', 'gain'], { numericOnly: true });
+    const discountCol = find(['discount', 'reduction'], { numericOnly: true });
+    const priceCol    = find(['unit_price', 'price', 'unit_cost', 'cost', 'rate', 'fee'], { numericOnly: true });
+    const lengthCol   = find(['length', 'len'], { numericOnly: true });
+    const widthCol    = find(['width', 'breadth', 'wid'], { numericOnly: true });
+    const heightCol   = find(['height', 'depth', 'ht'], { numericOnly: true });
+
+    if (salesCol && quantityCol) add({ col: `sales_per_${slug(quantityCol)}`, type: 'ratio', operation: 'ratio', inputs: [salesCol, quantityCol], formula: `${salesCol} / ${quantityCol}`, desc: 'Per-unit sales value.' });
+    if (profitCol && salesCol)   add({ col: 'profit_margin', type: 'ratio', operation: 'ratio', inputs: [profitCol, salesCol], formula: `${profitCol} / ${salesCol}`, desc: 'Profit margin percentage.' });
+    if (discountCol && priceCol) add({ col: 'discount_rate', type: 'ratio', operation: 'ratio', inputs: [discountCol, priceCol], formula: `${discountCol} / ${priceCol}`, desc: 'Discount as fraction of price.' });
+    if (lengthCol && widthCol)   add({ col: `area_${slug(lengthCol)}_${slug(widthCol)}`, type: 'product', operation: 'product', inputs: [lengthCol, widthCol], formula: `${lengthCol} × ${widthCol}`, desc: 'Area from two dimension columns.' });
+    if (lengthCol && widthCol && heightCol) add({ col: `volume_${slug(lengthCol)}`, type: 'product', operation: 'product', inputs: [lengthCol, widthCol, heightCol], formula: `${lengthCol} × ${widthCol} × ${heightCol}`, desc: 'Volume from three dimension columns.' });
+
+    // Log transforms for skewed numeric cols
+    numericCols.slice(0, 3).forEach(col => {
+      if (!salesCol && !profitCol) return; // only add log if no ratio features yet
+      add({ col: `${slug(col)}_log`, type: 'log', operation: 'log', inputs: [col], formula: `log1p(${col})`, desc: `Log transform of ${col} to reduce skew.` });
+    });
+
+    // Fallback: normalize first numeric col
+    if (suggestions.length === 0 && numericCols.length > 0) {
+      const col = numericCols[0];
+      add({ col: `${slug(col)}_normalized`, type: 'normalize', operation: 'normalize', inputs: [col], formula: `${col} / max(${col})`, desc: `Scales ${col} to 0–1 range.` });
+    }
+
+    return suggestions;
   };
 
   const startFeatStream = () => {
@@ -631,9 +338,10 @@ const EmployeeCleaningPage = () => {
     setFeatDone(false);
     setFeatStreamText('');
     let line = 0, ch = 0, text = '';
-    
-    // Determine dynamic suggestions based on data
-    const suggestions = buildFeatureSuggestions(tableHeaders, tableRows);
+
+    // Build real suggestions from column knowledge
+    const outlierCols = getNumCols();
+    const suggestions = buildFeatureSuggestions(tableHeaders, outlierCols);
     setFeatStatuses({});
     setAiSuggestions(suggestions);
     
@@ -659,12 +367,32 @@ const EmployeeCleaningPage = () => {
     tick();
   };
 
+  // Columns that are useless for outlier detection
+  const ID_DATE_PATTERN = /\b(id|_id|date|time|timestamp|created|updated|at|year|month|day)\b/i;
+
   const getNumCols = () => {
-    return tableHeaders.filter(col => {
-      const vals = tableRows.slice(0, 20).map(r => parseFloat(r[col])).filter(v => !isNaN(v));
-      return vals.length > 5;
-    });
+    const isDateCol = (col) => {
+      // Heuristic: if >50% of first-page values parse as dates
+      const sample = tableRows.slice(0, 20).map(r => r[col]).filter(Boolean);
+      if (sample.length === 0) return false;
+      const parseable = sample.filter(v => !isNaN(Date.parse(v)) && isNaN(Number(v)));
+      return parseable.length / sample.length > 0.5;
+    };
+
+    const isIdCol = (col) => ID_DATE_PATTERN.test(col);
+
+    // Prefer backend-reported numeric columns
+    const candidates = (rawStats.numericColumns && rawStats.numericColumns.length > 0)
+      ? tableHeaders.filter(col => rawStats.numericColumns.includes(col))
+      : tableHeaders.filter(col => {
+          const vals = tableRows.slice(0, 20).map(r => parseFloat(r[col])).filter(v => !isNaN(v));
+          return vals.length > 5;
+        });
+
+    // Filter out ID-like and date-like columns
+    return candidates.filter(col => !isIdCol(col) && !isDateCol(col));
   };
+
 
   const cNulls = rawStats.columnNulls || {};
   const totNulls = rawStats.totalNulls || 0;
@@ -672,51 +400,6 @@ const EmployeeCleaningPage = () => {
   const totDupes = rawStats.totalDuplicates || 0;
   const numCols = getNumCols();
 
-  const handleAiDecide = () => {
-    const newSettings = { ...settings };
-    
-    if (currentStep === 1) {
-      const s1 = {};
-      nullCols.forEach(col => {
-        // We still use a preview check for numeric vs string because raw_stats doesn't hold types yet
-        const isNumeric = tableRows.slice(0, 20).map(r => parseFloat(r[col])).filter(v => !isNaN(v)).length > 5;
-        s1[col] = isNumeric ? 'Fill with median' : 'Fill with mode';
-      });
-      newSettings[1] = {...newSettings[1], ...s1};
-    } else if (currentStep === 2) {
-      newSettings[2] = { strategy: 'Keep first' };
-    } else if (currentStep === 3) {
-      const s3 = {};
-      tableHeaders.forEach(col => {
-        const sampleVals = tableRows.slice(0, 20).map(r => r[col]).filter(v => v != null && String(v).trim() !== '');
-        if (sampleVals.length === 0) {
-          s3[col] = 'String';
-        } else {
-          const isBool = sampleVals.every(v => ['true', 'false', '0', '1'].includes(String(v).toLowerCase()));
-          if (isBool) { s3[col] = 'Boolean'; }
-          else {
-            const numVals = sampleVals.map(v => parseFloat(v)).filter(v => !isNaN(v));
-            if (numVals.length === sampleVals.length) {
-              const isInt = sampleVals.every(v => Number.isInteger(parseFloat(v)));
-              s3[col] = isInt ? 'Integer' : 'Float';
-            } else {
-              const dateVals = sampleVals.filter(v => !isNaN(new Date(v).getTime()) && isNaN(v));
-              if (dateVals.length === sampleVals.length) s3[col] = 'Date';
-              else s3[col] = 'String';
-            }
-          }
-        }
-      });
-      newSettings[3] = {...newSettings[3], ...s3};
-    } else if (currentStep === 4) {
-      const s4 = {};
-      numCols.forEach(col => s4[col] = 'IQR capping');
-      newSettings[4] = {...newSettings[4], ...s4};
-    }
-    
-    setSettings(newSettings);
-    return newSettings[currentStep];
-  };
 
   const syncPreview = async () => {
     if (!dsId) return false;
@@ -728,7 +411,6 @@ const EmployeeCleaningPage = () => {
 
     setPage(1);
     setTableRows(previewRes.data || []);
-    setCleanedRows(previewRes.data || []);
     setTableHeaders(previewRes.data?.length > 0 ? Object.keys(previewRes.data[0]) : []);
     setTotalRows(previewRes.totalRows || 0);
     if (previewRes.currentStats || previewRes.rawStats) {
@@ -737,7 +419,7 @@ const EmployeeCleaningPage = () => {
     return true;
   };
 
-  const activeData = cleanedRows.length > 0 ? cleanedRows : tableRows;
+  const activeData = tableRows;
   
   const acceptedFeatObj = aiSuggestions.filter(s => featStatuses[s.id] === 'accept');
   const acceptedFeaturesPersisted =
@@ -756,8 +438,11 @@ const EmployeeCleaningPage = () => {
     // For other steps, we show all as they affect rows or are global
   }
   
-  // Limit initial view to prevent lag, append new features
-  const limitedHeaders = [...(showHeaders.length > 0 ? showHeaders.slice(0, 15) : []), ...acceptedFeatObj.map(f => f.col)];
+  // Deduplicated: accepted feature cols already in the dataset must not appear twice
+  const limitedHeaders = Array.from(new Set([
+    ...(showHeaders.length > 0 ? showHeaders.slice(0, 15) : []),
+    ...acceptedFeatObj.map(f => f.col)
+  ]));
   const finalHeaders = Array.from(
     new Set([
       ...showHeaders,
@@ -804,13 +489,13 @@ const EmployeeCleaningPage = () => {
         <div>
           <div className="clean-ds-label">{dsName}</div>
           <div className="clean-ds-sublabel">
-            v1 · {tableRows.length.toLocaleString()} rows · {tableHeaders.length} cols · Cleaning in progress
+            v1 · {(rawStats.totalRows || tableRows.length).toLocaleString()} rows · {tableHeaders.length} cols · {cleaningState?.steps?.[STEPS[currentStep-1]?.statusKey] === 'committed' ? 'Done' : 'In Progress'}
           </div>
         </div>
         <div className="clean-topnav-right">
           <div style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 10, color: 'var(--amber)', display: 'flex', alignItems: 'center', gap: 6 }}>
             <span style={{ width: 6, height: 6, borderRadius: '50%', background: 'var(--amber)', display: 'inline-block', animation: 'cleanBlink 1s infinite' }}></span>
-            Cleaning in progress
+            {cleaningState?.steps?.[STEPS[currentStep-1]?.statusKey] === 'committed' ? 'Committed' : 'Cleaning in progress'}
           </div>
           <button className="clean-btn clean-btn-ghost clean-btn-sm" onClick={() => setVerifyOpen(true)}>Verify Dataset</button>
         </div>
@@ -819,26 +504,26 @@ const EmployeeCleaningPage = () => {
       {/* Timeline */}
       <div className="clean-timeline">
         {STEPS.map((s) => {
+          const stepStatus = cleaningState?.steps?.[s.statusKey] || 'pending';
           let cls = 'clean-step';
-          if (s.id < currentStep) cls += ' done';
+          if (stepStatus === 'committed') cls += ' done';
           else if (s.id === currentStep) cls += ' active';
           if (s.id === 5) cls += ' feat';
 
-          let status = 'Pending';
-          if (s.id < currentStep) status = 'Done';
+          let statusText = 'Pending';
+          if (stepStatus === 'committed') statusText = 'Done';
+          else if (stepStatus === 'previewed') statusText = 'Previewing';
           else if (s.id === currentStep) {
-            if (s.id === 1) status = `${totNulls} found`;
-            if (s.id === 2) status = `${totDupes} dupes`;
-            if (s.id === 3) status = 'Checking';
-            if (s.id === 4) status = 'Scanning';
-            if (s.id === 5) status = 'Ready';
+             if (s.id === 1) statusText = `${totNulls} found`;
+             if (s.id === 2) statusText = `${totDupes} dupes`;
+             else statusText = 'Active';
           }
 
           return (
             <div key={s.id} className={cls} style={{ cursor: 'default' }}>
-              <div className="clean-step-circle">{s.id === 5 ? '✦' : s.id}</div>
+              <div className="clean-step-circle">{stepStatus === 'committed' ? '✓' : (s.id === 5 ? '✦' : s.id)}</div>
               <div className="clean-step-name">{s.shortName}</div>
-              <div className="clean-step-status">{status}</div>
+              <div className="clean-step-status">{statusText}</div>
             </div>
           );
         })}
@@ -987,10 +672,6 @@ const EmployeeCleaningPage = () => {
                     ))
                   )}
                 </div>
-                <div className="clean-skip-bar">
-                  <button className="clean-btn clean-btn-ghost clean-skip-btn" onClick={() => setCurrentStep(2)}>Skip This Step</button>
-                  <button className="clean-btn clean-btn-ghost clean-skip-btn" style={{color:'var(--purple)', borderColor:'rgba(167,139,250,0.3)'}} onClick={handleAiDecide}>✦ Let AI Decide</button>
-                </div>
               </div>
             )}
 
@@ -999,7 +680,7 @@ const EmployeeCleaningPage = () => {
               <div>
                 <div className="clean-stat-row">
                   <div className="clean-stat-mini"><div className="clean-stat-mini-val" style={{color:'var(--amber)'}}>{totDupes}</div><div className="clean-stat-mini-lbl">Dupes Found</div></div>
-                  <div className="clean-stat-mini"><div className="clean-stat-mini-val">{(tableRows.length - totDupes).toLocaleString()}</div><div className="clean-stat-mini-lbl">Unique Rows</div></div>
+                  <div className="clean-stat-mini"><div className="clean-stat-mini-val">{((rawStats.totalRows || tableRows.length) - totDupes).toLocaleString()}</div><div className="clean-stat-mini-lbl">Unique Rows</div></div>
                 </div>
                 <div className="clean-step-card">
                   <div className="clean-step-card-title">Duplicate Strategy</div>
@@ -1015,10 +696,6 @@ const EmployeeCleaningPage = () => {
                     })}
                   </div>
                 </div>
-                <div className="clean-skip-bar">
-                  <button className="clean-btn clean-btn-ghost clean-skip-btn" onClick={() => setCurrentStep(3)}>Skip This Step</button>
-                  <button className="clean-btn clean-btn-ghost clean-skip-btn" style={{color:'var(--purple)', borderColor:'rgba(167,139,250,0.3)'}} onClick={handleAiDecide}>✦ Let AI Decide</button>
-                </div>
               </div>
             )}
 
@@ -1027,7 +704,7 @@ const EmployeeCleaningPage = () => {
               <div>
                 <div className="clean-step-card">
                   <div className="clean-step-card-title">Type Adjustments</div>
-                  {showHeaders.slice(0, 10).map(col => {
+                  {showHeaders.map(col => {
                     return (
                       <div className="clean-col-row" key={col}>
                         <div><div className="clean-col-name">{col}</div></div>
@@ -1037,10 +714,6 @@ const EmployeeCleaningPage = () => {
                       </div>
                     );
                   })}
-                </div>
-                <div className="clean-skip-bar">
-                  <button className="clean-btn clean-btn-ghost clean-skip-btn" onClick={() => setCurrentStep(4)}>Skip This Step</button>
-                  <button className="clean-btn clean-btn-ghost clean-skip-btn" style={{color:'var(--purple)', borderColor:'rgba(167,139,250,0.3)'}} onClick={handleAiDecide}>✦ Let AI Decide</button>
                 </div>
               </div>
             )}
@@ -1062,10 +735,6 @@ const EmployeeCleaningPage = () => {
                       </div>
                     ))
                   )}
-                </div>
-                <div className="clean-skip-bar">
-                  <button className="clean-btn clean-btn-ghost clean-skip-btn" onClick={() => setCurrentStep(5)}>Skip This Step</button>
-                  <button className="clean-btn clean-btn-ghost clean-skip-btn" style={{color:'var(--purple)', borderColor:'rgba(167,139,250,0.3)'}} onClick={handleAiDecide}>✦ Let AI Decide</button>
                 </div>
               </div>
             )}
@@ -1132,51 +801,82 @@ const EmployeeCleaningPage = () => {
               </div>
             )}
 
-            <div style={{ marginTop: 32, padding: '16px 0 0 0', borderTop: '1px solid var(--border)' }}>
-              <div style={{ display: 'flex', gap: 8, marginBottom: 12 }}>
-                 {currentStep > 1 && (
-                   <button 
-                     className="clean-btn clean-btn-ghost" 
-                     style={{ flex: 1 }} 
-                     onClick={() => setCurrentStep(prev => prev - 1)}
-                   >
-                     ← Previous Step
-                   </button>
-                 )}
-              </div>
+            <div style={{ marginTop: 32, padding: '16px 0 0 0', borderTop: '1px solid var(--border)', display: 'flex', flexDirection: 'column', gap: 10 }}>
+              {/* Previous button — always in same row as main actions */}
               {currentStep < 5 ? (
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                <>
                   <div style={{ display: 'flex', gap: 8 }}>
-                    <button 
-                      className="clean-btn" 
+                    <button
+                      className="clean-btn"
                       style={{ flex: 1, background: 'rgba(167, 139, 250, 0.1)', color: 'var(--purple)', border: '1px solid rgba(167, 139, 250, 0.3)' }}
                       onClick={handleLetAiDecide}
                       disabled={loading}
                     >
                       ✦ Let AI Decide
                     </button>
-                    <button 
-                      className="clean-btn clean-btn-primary" 
+                    <button
+                      className="clean-btn clean-btn-primary"
                       style={{ flex: 1 }}
-                      onClick={handleApplyManual}
+                      onClick={handleApplyFinal}
                       disabled={loading}
                     >
-                      Apply Changes
+                      Apply Final Changes
                     </button>
                   </div>
-                  <button 
-                    className="clean-btn clean-btn-ghost" 
+                  <div style={{ display: 'flex', gap: 8 }}>
+                    {currentStep > 1 && (
+                      <button
+                        className="clean-btn clean-btn-ghost"
+                        style={{ flex: 1 }}
+                        onClick={() => setCurrentStep(prev => prev - 1)}
+                        disabled={loading}
+                      >
+                        ← Previous Step
+                      </button>
+                    )}
+                    <button
+                      className="clean-btn clean-btn-ghost"
+                      style={{ flex: 1, fontSize: 12, opacity: 0.8 }}
+                      onClick={handleSkip}
+                      disabled={loading}
+                    >
+                      Skip this step
+                    </button>
+                  </div>
+                </>
+              ) : (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                  <div style={{ display: 'flex', gap: 8 }}>
+                    <button
+                      className="clean-btn clean-btn-ghost"
+                      style={{ flex: 1 }}
+                      onClick={() => setCurrentStep(prev => Math.max(1, prev - 1))}
+                      disabled={loading}
+                    >
+                      ← Previous Step
+                    </button>
+                    <button
+                      className="clean-btn clean-btn-primary"
+                      style={{ flex: 1 }}
+                      disabled={loading}
+                      onClick={async () => {
+                        suppressLivePreview.current = true;
+                        await handleApplyFinal();
+                        suppressLivePreview.current = false;
+                        setVerifyOpen(true);
+                      }}
+                    >
+                      {loading ? 'Applying...' : 'Apply & Finalize →'}
+                    </button>
+                  </div>
+                  <button
+                    className="clean-btn clean-btn-ghost"
                     style={{ width: '100%', fontSize: 12, opacity: 0.8 }}
                     onClick={handleSkip}
                     disabled={loading}
                   >
-                    Skip this step
+                    Skip Feature Eng.
                   </button>
-                </div>
-              ) : (
-                <div style={{ display: 'flex', gap: 8 }}>
-                   <button className="clean-btn clean-btn-ghost" style={{flex: 1}} onClick={() => setCurrentStep(prev => Math.max(1, prev - 1))}>← Back</button>
-                   <button className="clean-btn clean-btn-primary" style={{flex: 1}} onClick={() => setVerifyOpen(true)}>Finalize Dataset →</button>
                 </div>
               )}
             </div>
@@ -1184,18 +884,7 @@ const EmployeeCleaningPage = () => {
         </div>
       </div>
 
-      {/* Bottom Action Bar */}
-      <div className="clean-action-bar">
-        <div className="clean-step-indicator">Step {currentStep} of 5 — {STEPS[currentStep-1].name}</div>
-        <div style={{ display: 'flex', gap: 8 }}>
-          {currentStep > 1 && <button className="clean-btn clean-btn-ghost" onClick={() => setCurrentStep(prev => Math.max(1, prev - 1))}>← Previous</button>}
-          {currentStep < 5 ? (
-             <button className="clean-btn clean-btn-primary" onClick={handleApplyManual} disabled={loading}>Apply & Next</button>
-          ) : (
-             <button className="clean-btn clean-btn-primary" onClick={() => setVerifyOpen(true)}>Finalize</button>
-          )}
-        </div>
-      </div>
+
 
       {/* VERIFY MODAL */}
       {verifyOpen && (
@@ -1210,7 +899,7 @@ const EmployeeCleaningPage = () => {
             </div>
             
             <div className="clean-verify-stats">
-              <div className="clean-vstat"><div className="clean-vstat-val" style={{color:'var(--green)'}}>{activeData.length}</div><div className="clean-vstat-lbl">Rows After Cleaning</div></div>
+              <div className="clean-vstat"><div className="clean-vstat-val" style={{color:'var(--green)'}}>{(rawStats.totalRows || tableRows.length).toLocaleString()}</div><div className="clean-vstat-lbl">Rows After Cleaning</div></div>
               <div className="clean-vstat"><div className="clean-vstat-val" style={{color:'var(--red)'}}>{totNulls}</div><div className="clean-vstat-lbl">Nulls Handled</div></div>
               <div className="clean-vstat"><div className="clean-vstat-val" style={{color:'var(--amber)'}}>{totDupes}</div><div className="clean-vstat-lbl">Dupes Handled</div></div>
             </div>
@@ -1259,19 +948,6 @@ const EmployeeCleaningPage = () => {
                   onClick={async () => {
                     setLoading(true);
                     try {
-                      // 1. Gather accepted features
-                      const acceptedFeatures = aiSuggestions.filter(s => featStatuses[s.id] === 'accept');
-                      
-                      // 2. If features exist, apply them via the transformation engine first
-                      if (acceptedFeatures.length > 0 && !acceptedFeatures.every((feat) => tableHeaders.includes(feat.col))) {
-                        const transformConfig = { type: 'feature_eng', params: { features: acceptedFeatures } };
-                        const previewRes = await previewCleaningStep(dsId, 5, transformConfig, false);
-                        if (!previewRes.success) throw new Error("Failed to preview features: " + previewRes.message);
-                        const applyRes = await applyCleaningStep(dsId, 5);
-                        if (!applyRes.success) throw new Error("Failed to apply features: " + applyRes.message);
-                        await syncPreview();
-                      }
-
                       // 3. Move file to finalized (cleaned) directory
                       await finalizeDataset(dsId);
                       navigate(`/employee/visualization?ds=${dsId}&name=${encodeURIComponent(dsName)}`);

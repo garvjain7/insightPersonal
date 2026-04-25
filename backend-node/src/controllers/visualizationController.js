@@ -2,6 +2,8 @@ import path from "path";
 import fs from "fs/promises";
 import { pool } from "../config/db.js";
 import { validateDatasetAccess, getDatasetPaths } from "../utils/accessUtils.js";
+import { parse } from "csv-parse";
+import { createReadStream } from "fs";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // GET /api/visualization/:id
@@ -49,135 +51,6 @@ export const getVisualization = async (req, res) => {
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
-// GET /api/cleaned-data/:id
-// Returns paginated cleaned data with optional filters and search
-// ─────────────────────────────────────────────────────────────────────────────
-export const getCleanedData = async (req, res) => {
-  try {
-    const datasetId = req.params.id;
-    if (!datasetId) return res.status(400).json({ success: false, message: "Dataset ID required" });
-
-    const userEmail = req.user?.email;
-    if (!userEmail) return res.status(401).json({ success: false, message: "Authentication required" });
-
-    // Access control
-    const userResult = await pool.query("SELECT user_id, role FROM users WHERE email = $1", [userEmail]);
-    const user = userResult.rows[0];
-    if (!user) return res.status(401).json({ success: false, message: "User not found" });
-
-    if (!(await validateDatasetAccess(user.user_id, datasetId, user.role))) {
-      return res.status(403).json({ success: false, message: "Access denied" });
-    }
-
-    // Get cleaned file path
-    const dsResult = await pool.query(
-      "SELECT file_name FROM datasets WHERE dataset_id = $1",
-      [datasetId]
-    );
-    const row = dsResult.rows[0];
-    if (!row) return res.status(404).json({ success: false, message: "Dataset not found" });
-
-    const cleanedPath = path.join(process.env.UPLOADS_ROOT || path.join(process.cwd(), 'uploads'), 'cleaned', `cleaned_${datasetId}.csv`);
-    try {
-      await fs.access(cleanedPath);
-    } catch {
-      return res.status(404).json({ success: false, message: "Cleaned data not found. Please complete cleaning first." });
-    }
-
-    // Read and process data
-    const data = [];
-    let headers = [];
-    let totalRows = 0;
-
-    const stream = fs.createReadStream(cleanedPath)
-      .pipe(require('csv-parser')());
-
-    for await (const row of stream) {
-      if (headers.length === 0) {
-        headers = Object.keys(row);
-      }
-      data.push(row);
-      totalRows++;
-    }
-
-    // Apply filters
-    const { filters, search, page = 1, limit = 500 } = req.query;
-    let filteredData = data;
-
-    if (filters) {
-      const filterObj = JSON.parse(filters);
-      filteredData = data.filter(row => {
-        for (const [col, filterVal] of Object.entries(filterObj)) {
-          if (Array.isArray(filterVal)) {
-            // Categorical filter
-            if (!filterVal.includes(row[col])) return false;
-          } else if (filterVal.min !== undefined || filterVal.max !== undefined) {
-            // Numeric filter
-            const val = parseFloat(row[col]);
-            if (isNaN(val)) return false;
-            if (filterVal.min !== undefined && val < filterVal.min) return false;
-            if (filterVal.max !== undefined && val > filterVal.max) return false;
-          }
-        }
-        return true;
-      });
-    }
-
-    if (search) {
-      const searchLower = search.toLowerCase();
-      filteredData = filteredData.filter(row =>
-        headers.some(col => String(row[col] || '').toLowerCase().includes(searchLower))
-      );
-    }
-
-    // Pagination
-    const startIndex = (page - 1) * limit;
-    const endIndex = startIndex + limit;
-    const paginatedData = filteredData.slice(startIndex, endIndex);
-
-    // Get column types and stats
-    const columnTypes = {};
-    const columnStats = {};
-    headers.forEach(col => {
-      const sampleVals = data.slice(0, 100).map(r => r[col]).filter(v => v != null && v !== '');
-      if (sampleVals.length === 0) {
-        columnTypes[col] = 'string';
-        return;
-      }
-      const numVals = sampleVals.map(v => parseFloat(v)).filter(v => !isNaN(v));
-      if (numVals.length === sampleVals.length) {
-        columnTypes[col] = 'numeric';
-        const vals = data.map(r => parseFloat(r[col])).filter(v => !isNaN(v));
-        if (vals.length > 0) {
-          columnStats[col] = {
-            min: Math.min(...vals),
-            max: Math.max(...vals),
-            mean: vals.reduce((a, b) => a + b, 0) / vals.length
-          };
-        }
-      } else {
-        columnTypes[col] = 'categorical';
-      }
-    });
-
-    return res.json({
-      success: true,
-      rows: paginatedData,
-      headers,
-      columnTypes,
-      columnStats,
-      totalRows: filteredData.length,
-      page: parseInt(page),
-      limit: parseInt(limit)
-    });
-
-  } catch (err) {
-    console.error("[CLEANED DATA CONTROLLER]", err);
-    return res.status(500).json({ success: false, message: "Internal server error" });
-  }
-};
-
-// ─────────────────────────────────────────────────────────────────────────────
 // POST /api/chart-data/:id
 // Returns chart data based on parameters
 // ─────────────────────────────────────────────────────────────────────────────
@@ -201,16 +74,16 @@ export const getChartData = async (req, res) => {
     const { xAxis, yAxis, aggregation = 'sum', filters = {}, limit = 10 } = req.body;
 
     // Get cleaned data
-    const cleanedPath = path.join(process.env.UPLOADS_ROOT || path.join(process.cwd(), 'uploads'), 'cleaned', `cleaned_${datasetId}.csv`);
-    if (!fs.existsSync(cleanedPath)) {
+    const cleanedPath = path.join(path.resolve(process.cwd(), '..', 'uploads'), 'cleaned', `cleaned_${datasetId}.csv`);
+    try {
+      await fs.access(cleanedPath);
+    } catch {
       return res.status(404).json({ success: false, message: "Cleaned data not found" });
     }
 
     const data = [];
-    const stream = fs.createReadStream(cleanedPath)
-      .pipe(require('csv-parser')());
-
-    for await (const row of stream) {
+    const parser = createReadStream(cleanedPath).pipe(parse({ columns: true, skip_empty_lines: true }));
+    for await (const row of parser) {
       data.push(row);
     }
 
@@ -307,8 +180,8 @@ export const getCleanedDatasets = async (req, res) => {
       datasetsQuery = `
         SELECT d.dataset_id, d.dataset_name
         FROM datasets d
-        JOIN dataset_permissions dp ON d.dataset_id = dp.dataset_id
-        WHERE dp.user_id = $1 AND d.upload_status = 'cleaned'
+        JOIN permissions p ON d.dataset_id = p.dataset_id
+        WHERE p.user_id = $1 AND d.upload_status = 'cleaned' AND p.can_view = TRUE
       `;
     }
 
@@ -316,7 +189,7 @@ export const getCleanedDatasets = async (req, res) => {
     const assignedDatasets = datasetsResult.rows;
 
     // Check which have cleaned files
-    const uploadsRoot = process.env.UPLOADS_ROOT || path.join(process.cwd(), 'uploads');
+    const uploadsRoot = path.resolve(process.cwd(), "..", "uploads");
     const cleanedDir = path.join(uploadsRoot, 'cleaned');
 
     const availableDatasets = [];

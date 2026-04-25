@@ -210,10 +210,7 @@ export const resetPassword = async (token, newPassword) => {
     return response.data;
 };
 
-export const getCleanedData = async (datasetId, params = {}) => {
-    const response = await api.get(`/cleaned-data/${datasetId}`, { params });
-    return response.data;
-};
+
 
 export const getAnalysis = async (datasetId) => {
     const response = await api.get(`/datasets/${datasetId}/analysis`);
