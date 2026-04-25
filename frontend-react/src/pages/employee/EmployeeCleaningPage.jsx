@@ -1,7 +1,7 @@
-import React, { useState, useEffect } from 'react';
+import { useState, useEffect } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import './EmployeeCleaningPage.css';
-import { getDatasetPreview, transformDataset, finalizeDataset, pauseCleaning, downloadDataset } from '../../services/api';
+import { getDatasetPreview, finalizeDataset, pauseCleaning, downloadDataset, initCleaningWorkspace, getCleaningState, previewCleaningStep, applyCleaningStep } from '../../services/api';
 
 
 const STEPS = [
@@ -276,34 +276,87 @@ const EmployeeCleaningPage = () => {
 
   useEffect(() => {
     const fetchData = async () => {
-      if (!dsId) { setLoading(false); return; }
+      if (!dsId) {
+        setLoading(false);
+        return;
+      }
       setLoading(true);
+      setError(null);
       try {
+        // Step 1: Check/init workspace
+        const stateRes = await getCleaningState(dsId);
+
+        if (!stateRes.success) {
+        } else if (!stateRes.initialised) {
+          const initRes = await initCleaningWorkspace(dsId);
+          if (!initRes.success) {
+          }
+        } else {
+          // Workspace already initialised
+        }
+
+        // Step 2: Load preview
         const data = await getDatasetPreview(dsId, page);
+
         if (data.success) {
+          // ── Detect corrupt/empty working file from a broken previous session ──
+          // totalRows <= 1 means the file only has a header row (0 real data rows).
+          // Force a re-init to rebuild the working file from raw, then retry once.
+          if ((!data.data || data.data.length === 0) && (data.totalRows || 0) <= 1) {
+            const reInitRes = await initCleaningWorkspace(dsId);
+
+            // Retry preview after re-init
+            const retryData = await getDatasetPreview(dsId, page, 'working');
+
+            if (retryData.success && retryData.data?.length > 0) {
+              setTableRows(retryData.data);
+              setCleanedRows(retryData.data);
+              setTotalRows(retryData.totalRows || 0);
+              if (retryData.currentStats || retryData.rawStats) setRawStats(retryData.currentStats || retryData.rawStats);
+              setTableHeaders(Object.keys(retryData.data[0]));
+            } else {
+              // Last resort: try reading raw source directly
+              const rawData = await getDatasetPreview(dsId, page, 'raw');
+              if (rawData.success && rawData.data?.length > 0) {
+                setTableRows(rawData.data);
+                setCleanedRows(rawData.data);
+                setTotalRows(rawData.totalRows || 0);
+                if (rawData.currentStats || rawData.rawStats) setRawStats(rawData.currentStats || rawData.rawStats);
+                setTableHeaders(Object.keys(rawData.data[0]));
+              } else {
+                setError('Dataset file appears to be empty or corrupted. Please re-upload the dataset.');
+              }
+            }
+            return;
+          }
+
           setTableRows(data.data || []);
           setCleanedRows(data.data || []);
           setTotalRows(data.totalRows || 0);
-          if (data.currentStats || data.rawStats) setRawStats(data.currentStats || data.rawStats);
-          if (data.data?.length > 0) {
-            setTableHeaders(Object.keys(data.data[0]));
+          if (data.currentStats || data.rawStats) {
+            setRawStats(data.currentStats || data.rawStats);
           }
+          if (data.data?.length > 0) {
+            const headers = Object.keys(data.data[0]);
+            setTableHeaders(headers);
+          }
+        } else {
+          setError(data.message || "Failed to load dataset preview.");
         }
       } catch (err) {
-        console.warn('Fetch error:', err);
-        setError("Failed to load dataset data.");
+        setError(err.response?.data?.message || err.message || "Failed to load dataset data.");
       } finally {
         setLoading(false);
       }
     };
     fetchData();
-  }, [dsId, page]);
+  }, [dsId]);
 
   // Track page exit (Pause Logging)
   useEffect(() => {
     return () => {
       if (dsId) {
-        pauseCleaning(dsId).catch(err => console.error("Pause logging failed:", err));
+        pauseCleaning(dsId).catch(() => {});
       }
     };
   }, [dsId]);
@@ -523,7 +576,13 @@ const EmployeeCleaningPage = () => {
         transformConfig = { type: 'feature_eng', params: { features: acceptedFeatures } };
       }
 
-      const res = await transformDataset(dsId, transformConfig.type, transformConfig.params);
+      const previewRes = await previewCleaningStep(dsId, stepId, transformConfig, false);
+      if (!previewRes.success) throw new Error(previewRes.message || "Backend preview error");
+
+      const applyRes = await applyCleaningStep(dsId, stepId);
+      if (!applyRes.success) throw new Error(applyRes.message || "Backend apply error");
+
+      const res = applyRes;
       if (res.success) {
         const previewLoaded = await refreshPreview();
         if (previewLoaded) {
@@ -724,10 +783,11 @@ const EmployeeCleaningPage = () => {
     try {
       if (acceptedFeatObj.length > 0 && !acceptedFeaturesPersisted) {
         setLoading(true);
-        const transformRes = await transformDataset(dsId, 'feature_eng', { features: acceptedFeatObj });
-        if (!transformRes.success) {
-          throw new Error(transformRes.message || 'Failed to generate features before download.');
-        }
+        const transformConfig = { type: 'feature_eng', params: { features: acceptedFeatObj } };
+        const previewRes = await previewCleaningStep(dsId, 5, transformConfig, false);
+        if (!previewRes.success) throw new Error(previewRes.message || 'Failed to preview features before download.');
+        const applyRes = await applyCleaningStep(dsId, 5);
+        if (!applyRes.success) throw new Error(applyRes.message || 'Failed to apply features before download.');
         await syncPreview();
       }
       await downloadDataset(dsId, `${dsName}_cleaned.csv`);
@@ -834,6 +894,18 @@ const EmployeeCleaningPage = () => {
           <div className="clean-data-scroll">
             {loading ? (
               <div style={{ padding: 40, textAlign: 'center', color: 'var(--ink3)' }}>Loading data...</div>
+            ) : error ? (
+              <div style={{ padding: 60, textAlign: 'center', color: 'var(--red)', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 16, marginTop: 40 }}>
+                <div style={{ fontSize: 18, color: 'var(--red)' }}>Error Loading Dataset</div>
+                <div style={{ fontSize: 14 }}>{error}</div>
+                <button 
+                  className="clean-btn clean-btn-ghost" 
+                  onClick={() => navigate('/employee/datasets')}
+                  style={{ marginTop: 8 }}
+                >
+                  Go Back
+                </button>
+              </div>
             ) : tableRows.length === 0 ? (
               <div style={{ padding: 60, textAlign: 'center', color: 'var(--ink3)', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 16, marginTop: 40 }}>
                 <div style={{ fontSize: 18, color: 'var(--ink)' }}>No Dataset Selected</div>
@@ -1195,10 +1267,10 @@ const EmployeeCleaningPage = () => {
                       // 2. If features exist, apply them via the transformation engine first
                       if (acceptedFeatures.length > 0 && !acceptedFeatures.every((feat) => tableHeaders.includes(feat.col))) {
                         const transformConfig = { type: 'feature_eng', params: { features: acceptedFeatures } };
-                        const transformRes = await transformDataset(dsId, transformConfig.type, transformConfig.params);
-                        if (!transformRes.success) {
-                          throw new Error("Failed to generate features: " + transformRes.message);
-                        }
+                        const previewRes = await previewCleaningStep(dsId, 5, transformConfig, false);
+                        if (!previewRes.success) throw new Error("Failed to preview features: " + previewRes.message);
+                        const applyRes = await applyCleaningStep(dsId, 5);
+                        if (!applyRes.success) throw new Error("Failed to apply features: " + applyRes.message);
                         await syncPreview();
                       }
 

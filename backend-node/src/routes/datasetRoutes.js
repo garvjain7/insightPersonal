@@ -4,7 +4,10 @@ import {
   getDatasetById,
   getDatasetStatus,
   updateDatasetStatus,
-  transformDataset,
+  initCleaningWorkspace,
+  previewCleaningStep,
+  applyCleaningStep,
+  getCleaningState,
   finalizeDataset,
   trainDataset,
   getAnalysis,
@@ -19,7 +22,6 @@ import {
   downloadDataset,
   pauseCleaning,
   getAvailableDatasetsToRequest,
-
 } from "../controllers/datasetController.js";
 
 import { protect } from "../middleware/protect.js";
@@ -67,9 +69,12 @@ router.get("/datasets/:id/download", protect, downloadDataset);
 ===================================================== */
 
 // Dataset Transformations (Workspace Model)
-router.post("/datasets/:id/transform", protect, transformDataset);
-router.post("/datasets/:id/finalize", protect, finalizeDataset);
-router.post("/datasets/:id/pause", protect, pauseCleaning);
+router.post("/datasets/:id/cleaning/init", protect, initCleaningWorkspace);
+router.post("/datasets/:id/cleaning/preview", protect, previewCleaningStep);
+router.post("/datasets/:id/cleaning/apply", protect, applyCleaningStep);
+router.post("/datasets/:id/cleaning/finalize", protect, finalizeDataset);
+router.get("/datasets/:id/cleaning/state", protect, getCleaningState);
+router.post("/datasets/:id/cleaning/pause", protect, pauseCleaning);
 
 
 // Train ML model (Python script)

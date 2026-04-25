@@ -75,13 +75,7 @@ const EmployeeDatasetsPage = () => {
             dataset_id: d.dataset_id || d._id,
             name: d.name || d.dataset_name || d.filename?.replace(/\.\w+$/, '') || `Dataset ${i + 1}`,
             type: d.filename?.split('.').pop() || d.name?.split('.').pop() || 'csv',
-            status: (() => {
-              const s = d.status || d.upload_status || 'not_cleaned';
-              if (s === 'ready' || s === 'completed' || s === 'cleaned') return 'cleaned';
-              if (s === 'processing' || s === 'cleaning') return 'cleaning';
-              if (s === 'failed') return 'failed';
-              return 'not_cleaned';
-            })(),
+            status: d.status || 'not_cleaned',
             source: 'server',
             path: d.filename,
             rows: d.rows_count || d.rows,

@@ -156,8 +156,10 @@ export const getDatasetAssignments = async (datasetId) => {
     return response.data;
 };
 
-export const getDatasetPreview = async (id, page = 1) => {
-    const response = await api.get(`/datasets/${id}/preview`, { params: { page } });
+export const getDatasetPreview = async (id, page = 1, source = null) => {
+    const params = { page };
+    if (source) params.source = source;
+    const response = await api.get(`/datasets/${id}/preview`, { params });
     return response.data;
 };
 
@@ -203,13 +205,29 @@ export const getAnalysis = async (datasetId) => {
     return response.data;
 };
 
-export const transformDataset = async (datasetId, type, params) => {
-    const response = await api.post(`/datasets/${datasetId}/transform`, { type, params });
+
+export const finalizeDataset = async (datasetId) => {
+    const response = await api.post(`/datasets/${datasetId}/cleaning/finalize`);
     return response.data;
 };
 
-export const finalizeDataset = async (datasetId) => {
-    const response = await api.post(`/datasets/${datasetId}/finalize`);
+export const initCleaningWorkspace = async (datasetId) => {
+    const response = await api.post(`/datasets/${datasetId}/cleaning/init`);
+    return response.data;
+};
+
+export const getCleaningState = async (datasetId) => {
+    const response = await api.get(`/datasets/${datasetId}/cleaning/state`);
+    return response.data;
+};
+
+export const previewCleaningStep = async (datasetId, step, config, isAi = false) => {
+    const response = await api.post(`/datasets/${datasetId}/cleaning/preview`, { step, config, is_ai: isAi });
+    return response.data;
+};
+
+export const applyCleaningStep = async (datasetId, step) => {
+    const response = await api.post(`/datasets/${datasetId}/cleaning/apply`, { step });
     return response.data;
 };
 
@@ -262,7 +280,7 @@ export const endChatSession = async (datasetId, reason) => {
 };
 
 export const pauseCleaning = async (datasetId) => {
-    const response = await api.post(`/datasets/${datasetId}/pause`);
+    const response = await api.post(`/datasets/${datasetId}/cleaning/pause`);
     return response.data;
 };
 

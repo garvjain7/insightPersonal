@@ -264,10 +264,8 @@ const DatasetsPage = () => {
                         display: 'flex', 
                         alignItems: 'center', 
                         justifyContent: 'space-between',
-                        cursor: 'pointer',
                         transition: 'all 0.3s ease'
                     }}
-                    onClick={() => navigate(`/dashboard/${dataset.dataset_id}`)}
                 >
                     <div style={{ display: 'flex', alignItems: 'center', gap: '1.5rem' }}>
                         <div style={{ 
@@ -306,7 +304,7 @@ const DatasetsPage = () => {
                         >
                             <Eye size={18} />
                         </button>
-                        {(dataset.status === 'completed' || dataset.status === 'ready' || dataset.status === 'cleaned') && (
+                        {(dataset.status === 'completed' || dataset.status === 'ready' || dataset.status === 'cleaned') ? (
                             <button 
                                 className="btn-ghost"
                                 onClick={(e) => {
@@ -316,6 +314,17 @@ const DatasetsPage = () => {
                                 style={{ padding: '0.5rem 1rem', fontSize: '0.85rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}
                             >
                                 <BarChart3 size={16} /> Visualize
+                            </button>
+                        ) : (
+                            <button 
+                                className="btn-ghost"
+                                onClick={(e) => {
+                                    e.stopPropagation();
+                                    navigate(`/employee/cleaning?ds=${dataset.dataset_id}&name=${encodeURIComponent(dataset.name)}`);
+                                }}
+                                style={{ padding: '0.5rem 1rem', fontSize: '0.85rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}
+                            >
+                                <Sparkles size={16} /> Clean Data
                             </button>
                         )}
                         <button 

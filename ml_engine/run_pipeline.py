@@ -1,28 +1,82 @@
-import os
-import sys
+"""
+run_pipeline.py — ML Pipeline Manager
+=======================================
+Called by Node.js AFTER the user has clicked "Finalize Dataset" in the cleaning wizard.
+
+This script reads the finalized cleaned CSV from:
+    /uploads/cleaned/cleaned_{dataset_id}.csv
+
+If that file does not yet exist, the pipeline exits with an error — the user must
+complete the cleaning wizard and click Finalize first.
+
+Pipeline stages (unchanged from previous version):
+    1.  Validator         — validate + register dataset metadata
+    2.  Schema Manager    — detect schema, types, date/target columns
+    3.  Feature Engineer  — derived features (no scaler for tree models)
+    4.  Trainer           — RF (lightweight) or RF+XGBoost (full mode)
+    5.  Forecaster        — only if datetime + target column present
+    6.  BI Engine         — KPIs, aggregations
+    7.  Metric Engine     — metric definitions
+    8.  Insight Engine    — auto insights
+    9.  Dashboard         — dashboard config generation
+    10. Artifact contract — verify all expected files were generated
+
+Pipeline mode is chosen by row count:
+    < 5 000  rows → bi_only      (skip ML training)
+    < 100 000 rows → lightweight  (RF only)
+    ≥ 100 000 rows → full         (RF + XGBoost)
+"""
+
+import argparse
 import json
 import logging
+import os
+import re
+import sys
 import time
-import datetime
-import argparse
-import pandas as pd
 
-from pipeline.validator import validate_dataset
-from pipeline.schema_manager import process_schema
-from pipeline.cleaner import clean_and_sample_dataset
-from pipeline.feature_engineer import engineer_features
-from pipeline.trainer import train_evaluate_models
-from pipeline.forecaster import generate_forecast
-from pipeline.bi_engine import run_bi_engine
-from pipeline.metric_engine import generate_metric_definitions
-from pipeline.insight_engine import generate_insights
-from pipeline.dashboard import generate_dashboard_config
-
-# Configure base logger
 logging.basicConfig(
-    level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s"
+    level=logging.INFO,
+    format="%(asctime)s - %(levelname)s - %(message)s",
 )
 logger = logging.getLogger("system_logger")
+
+
+# ── PII masking (for logs) ────────────────────────────────────────────────────
+
+def _mask_pii(text: str) -> str:
+    if not text or not isinstance(text, str):
+        return text
+    text = re.sub(r"([\w\.-]{2})[\w\.-]+@([\w\.-]+)", r"\1***@\2", text)
+    return text
+
+
+# ── Pipeline stage imports ────────────────────────────────────────────────────
+# Imported lazily so that import errors surface with a clear message.
+
+def _import_stages():
+    try:
+        from pipeline.validator import validate_dataset
+        from pipeline.schema_manager import process_schema
+        from pipeline.feature_engineer import engineer_features
+        from pipeline.trainer import train_evaluate_models
+        from pipeline.forecaster import generate_forecast
+        from pipeline.bi_engine import run_bi_engine
+        from pipeline.metric_engine import generate_metric_definitions
+        from pipeline.insight_engine import generate_insights
+        from pipeline.dashboard import generate_dashboard_config
+    except ImportError as exc:
+        logger.error(f"Failed to import pipeline stage: {exc}")
+        raise
+
+    return (
+        validate_dataset, process_schema, engineer_features,
+        train_evaluate_models, generate_forecast, run_bi_engine,
+        generate_metric_definitions, generate_insights, generate_dashboard_config,
+    )
+
+
+# ── Expected artifact contract ────────────────────────────────────────────────
 
 EXPECTED_ARTIFACTS = [
     "dataset_metadata.json",
@@ -38,123 +92,183 @@ EXPECTED_ARTIFACTS = [
     "model_metrics.json",
 ]
 
-# ─── Size Thresholds ─────────────────────────────────────────────────────────
-SMALL_THRESHOLD = 5_000  # rows < 5k  → bi_only (skip ML training)
-MEDIUM_THRESHOLD = 100_000  # rows < 100k → lightweight RF only
-# rows >= 100k → full (RF + XGBoost)
+# ── Size thresholds ───────────────────────────────────────────────────────────
+
+SMALL_THRESHOLD = 5_000
+MEDIUM_THRESHOLD = 100_000
 
 
-def _timed_stage(name, fn, *args, **kwargs):
-    """Run fn(*args, **kwargs) and emit a stage timing log."""
-    print(f"[STAGE-START] {name}")
+# ── Helpers ───────────────────────────────────────────────────────────────────
+
+def _timed_stage(name: str, fn, *args, **kwargs):
+    """Run fn(*args, **kwargs), emit timing logs, return (result, elapsed_s)."""
+    print(f"[STAGE-START] {name}", flush=True)
     t0 = time.time()
     result = fn(*args, **kwargs)
     elapsed = time.time() - t0
     elapsed_ms = int(elapsed * 1000)
-    print(f"[STAGE-END] {name} duration={elapsed_ms}ms")
     logger.info(f"[STAGE-END] {name} duration={elapsed_ms}ms")
-    sys.stdout.flush()
+    print(f"[STAGE-END] {name} duration={elapsed_ms}ms", flush=True)
     return result, elapsed
 
 
-def run_pipeline(file_path, user_id="default_user", dataset_id_input=None):
+def _write_skipped_forecast(dataset_dir: str, reason: str) -> None:
+    import json
+    from filelock import FileLock
+
+    forecast_path = os.path.join(dataset_dir, "forecast.json")
+    with FileLock(forecast_path + ".lock"):
+        with open(forecast_path, "w") as fh:
+            json.dump({"status": "skipped", "reason": reason}, fh, indent=4)
+
+
+# ── Guard: cleaned file must exist ────────────────────────────────────────────
+
+def _resolve_cleaned_path(uploads_root: str, dataset_id: str) -> str | None:
     """
-    Optimized DataInsights.ai ML Pipeline.
-    Changes vs previous version:
-      • Smart pipeline mode based on row count (bi_only / lightweight / full)
-      • Dataset loaded ONCE in run_pipeline and passed down via dataset_dir
-      • StandardScaler skipped for tree-based models
-      • Forecasting only runs when date + target columns exist
-      • Stage-level timing logged to system.log
-      • In-memory caching handled in query_engine (separate)
+    Return the path to the finalized cleaned CSV, or None if it doesn't exist.
+    """
+    cleaned_path = os.path.join(uploads_root, "cleaned", f"cleaned_{dataset_id}.csv")
+    return cleaned_path if os.path.isfile(cleaned_path) else None
+
+
+# ── Main pipeline ─────────────────────────────────────────────────────────────
+
+def run_pipeline(
+    dataset_id: str,
+    uploads_root: str,
+    user_id: str = "default_user",
+    dataset_dir_override: str | None = None,
+) -> dict:
+    """
+    Run the full ML pipeline for a finalized dataset.
+
+    Parameters
+    ----------
+    dataset_id        : ID of the dataset (used to locate cleaned CSV)
+    uploads_root      : Absolute path to the uploads/ root directory
+    user_id           : Identifier of the user/org (for logging)
+    dataset_dir_override : If provided, use this directory for ML artifacts instead
+                           of the default <uploads_root>/artifacts/<dataset_id>/
     """
     overall_start = time.time()
-    print(f"\n[PIPELINE-START] dataset_id={dataset_id_input}")
-    logger.info(f"[PIPELINE-START] dataset_id={dataset_id_input}")
+    logger.info(f"[PIPELINE-START] dataset_id={dataset_id}")
+    print(f"\n[PIPELINE-START] dataset_id={dataset_id}", flush=True)
 
     result_payload = {
         "status": "failed",
-        "dataset_id": dataset_id_input,
+        "dataset_id": dataset_id,
         "error": "",
         "data_quality_score": None,
         "artifacts_generated": [],
         "pipeline_mode": None,
+        "execution_time": None,
     }
 
-    # ── 1. Validation & Setup ───────────────────────────────────────────────
-    val_res, val_time = _timed_stage(
-        "validator",
-        validate_dataset,
-        file_path,
-        base_dir=os.path.dirname(os.path.abspath(__file__)),
-        user_id=user_id,
-        dataset_id=dataset_id_input,
-    )
-
-    if val_res.get("status") == "error":
-        result_payload["error"] = val_res.get("message")
+    # ── Guard: require finalized cleaned file ─────────────────────────────────
+    cleaned_path = _resolve_cleaned_path(uploads_root, dataset_id)
+    if cleaned_path is None:
+        msg = (
+            f"Cleaned dataset not found at uploads/cleaned/cleaned_{dataset_id}.csv. "
+            "The dataset must be fully cleaned and finalized before running the ML pipeline."
+        )
+        logger.error(f"[{dataset_id}] {msg}")
+        result_payload["error"] = msg
         return result_payload
 
-    dataset_id = val_res["dataset_id"]
-    dataset_dir = val_res["dataset_dir"]
-    row_count = val_res.get("rows", 0)
-    result_payload["dataset_id"] = dataset_id
+    logger.info(f"[{dataset_id}] Using cleaned file: {cleaned_path}")
 
-    # ── Determine pipeline mode ─────────────────────────────────────────────
-    row_count = int(row_count) if row_count else 0
-    if row_count < SMALL_THRESHOLD:
-        pipeline_mode = "bi_only"
-    elif row_count < MEDIUM_THRESHOLD:
-        pipeline_mode = "lightweight"
+    # ── Resolve artifact directory ────────────────────────────────────────────
+    if dataset_dir_override:
+        dataset_dir = dataset_dir_override
     else:
-        pipeline_mode = "full"
+        dataset_dir = os.path.join(uploads_root, "artifacts", str(dataset_id))
 
-    result_payload["pipeline_mode"] = pipeline_mode
-    logger.info(
-        f"[{dataset_id}] Dataset size: {row_count} rows → mode: {pipeline_mode}"
-    )
+    os.makedirs(dataset_dir, exist_ok=True)
 
-    training_time = 0
-    forecast_time = 0
+    training_time = 0.0
+    forecast_time = 0.0
     artifact_status = "success"
 
     try:
-        # ── 2. Schema & Profiling ───────────────────────────────────────────
-        schema, _ = _timed_stage(
-            "schema_manager", process_schema, val_res["raw_path"], dataset_dir
+        (
+            validate_dataset, process_schema, engineer_features,
+            train_evaluate_models, generate_forecast, run_bi_engine,
+            generate_metric_definitions, generate_insights, generate_dashboard_config,
+        ) = _import_stages()
+
+        # ── 1. Validation & Setup ─────────────────────────────────────────────
+        # Pass the already-cleaned file as the entry point.
+        # The validator registers it and sets up dataset_dir artifacts.
+        val_res, _ = _timed_stage(
+            "validator",
+            validate_dataset,
+            cleaned_path,
+            base_dir=os.path.dirname(os.path.abspath(__file__)),
+            user_id=user_id,
+            dataset_id=dataset_id,
+            dataset_dir=dataset_dir,          # tell validator where to write artifacts
         )
+
+        if val_res.get("status") == "error":
+            result_payload["error"] = val_res.get("message", "Validator returned an error")
+            return result_payload
+
+        row_count = int(val_res.get("rows", 0))
+
+        # ── Determine pipeline mode ───────────────────────────────────────────
+        if row_count < SMALL_THRESHOLD:
+            pipeline_mode = "bi_only"
+        elif row_count < MEDIUM_THRESHOLD:
+            pipeline_mode = "lightweight"
+        else:
+            pipeline_mode = "full"
+
+        result_payload["pipeline_mode"] = pipeline_mode
+        logger.info(f"[{dataset_id}] {row_count} rows → mode: {pipeline_mode}")
+
+        # ── 2. Schema & Profiling ─────────────────────────────────────────────
+        schema, _ = _timed_stage("schema_manager", process_schema, cleaned_path, dataset_dir)
         if not schema:
-            raise Exception("Schema detection failed")
-        result_payload["artifacts_generated"].extend(
-            ["schema.json", "profile_report.json"]
-        )
+            raise RuntimeError("Schema detection failed")
+        result_payload["artifacts_generated"].extend(["schema.json", "profile_report.json"])
 
-        # ── 3. Data Cleaning ────────────────────────────────────────────────
-        clean_res, _ = _timed_stage("cleaner", clean_and_sample_dataset, dataset_dir)
-        if not clean_res:
-            raise Exception("Data cleaning failed")
-        result_payload["data_quality_score"] = clean_res["quality_score"]
-
-        # ── 4. Feature Engineering (scaler only for linear models) ──────────
-        # In lightweight/full mode we use tree-based RF as baseline → no scaler
+        # ── 3. Feature Engineering ────────────────────────────────────────────
+        # Tree-based models (RF, XGBoost) do not need scaling.
         feat_res, _ = _timed_stage(
             "feature_engineer",
             engineer_features,
             dataset_dir,
-            use_scaler=False,  # Tree models don't need scaling
+            use_scaler=False,
         )
         if not feat_res:
-            raise Exception("Feature engineering failed")
+            raise RuntimeError("Feature engineering failed")
 
-        # ── 5. Training (smart mode) ────────────────────────────────────────
-        train_fn = lambda: train_evaluate_models(
-            dataset_dir, pipeline_mode=pipeline_mode
-        )
-        train_res, training_time = _timed_stage("trainer", train_fn)
-        if train_res:
-            result_payload["artifacts_generated"].append("feature_importance.json")
+        # ── 4. Training (mode-aware) ──────────────────────────────────────────
+        if pipeline_mode != "bi_only":
+            train_res, training_time = _timed_stage(
+                "trainer",
+                train_evaluate_models,
+                dataset_dir,
+                pipeline_mode=pipeline_mode,
+            )
+            if train_res:
+                result_payload["artifacts_generated"].extend(
+                    ["feature_importance.json", "model_metrics.json"]
+                )
+        else:
+            logger.info(f"[{dataset_id}] Training skipped (bi_only mode)")
+            # Write empty placeholders so artifact contract is satisfied
+            for artifact in ["feature_importance.json", "model_metrics.json"]:
+                artifact_path = os.path.join(dataset_dir, artifact)
+                if not os.path.exists(artifact_path):
+                    with open(artifact_path, "w") as fh:
+                        json.dump({"status": "skipped", "reason": "bi_only_mode"}, fh)
+            result_payload["artifacts_generated"].extend(
+                ["feature_importance.json", "model_metrics.json"]
+            )
 
-        # ── 6. Forecasting (guardrail: only if date + target present) ───────
+        # ── 5. Forecasting ────────────────────────────────────────────────────
         has_datetime = bool(schema.get("date_column"))
         has_target = bool(schema.get("sales_column") or schema.get("profit_column"))
 
@@ -163,30 +277,19 @@ def run_pipeline(file_path, user_id="default_user", dataset_id_input=None):
                 "forecaster", generate_forecast, dataset_dir
             )
         else:
-            logger.info(
-                f"[{dataset_id}] Forecasting skipped — missing datetime or target column."
-            )
-            forecast_path = os.path.join(dataset_dir, "forecast.json")
-            from filelock import FileLock
-
-            with FileLock(forecast_path + ".lock"):
-                with open(forecast_path, "w") as fh:
-                    json.dump(
-                        {"status": "skipped", "reason": "missing_datetime_or_target"},
-                        fh,
-                        indent=4,
-                    )
+            reason = "missing_datetime_or_target"
+            logger.info(f"[{dataset_id}] Forecasting skipped — {reason}")
+            _write_skipped_forecast(dataset_dir, reason)
             fc_res = {"status": "skipped"}
-            forecast_time = 0.0
 
         result_payload["artifacts_generated"].append("forecast.json")
 
-        # ── 7. BI Engine ────────────────────────────────────────────────────
+        # ── 6. BI Engine ──────────────────────────────────────────────────────
         bi_res, _ = _timed_stage("bi_engine", run_bi_engine, dataset_dir)
         if bi_res:
             result_payload["artifacts_generated"].append("kpi_summary.json")
 
-        # ── 8. Metric Engine ────────────────────────────────────────────────
+        # ── 7. Metric Engine ──────────────────────────────────────────────────
         metric_res, _ = _timed_stage(
             "metric_engine", generate_metric_definitions, dataset_dir
         )
@@ -195,75 +298,86 @@ def run_pipeline(file_path, user_id="default_user", dataset_id_input=None):
                 ["metrics.json", "metrics_definition.json"]
             )
 
-        # ── 9. Insight Engine ───────────────────────────────────────────────
+        # ── 8. Insight Engine ─────────────────────────────────────────────────
         insight_res, _ = _timed_stage("insight_engine", generate_insights, dataset_dir)
         if insight_res:
             result_payload["artifacts_generated"].append("insights.json")
 
-        # ── 10. Dashboard Generation ────────────────────────────────────────
+        # ── 9. Dashboard ──────────────────────────────────────────────────────
         dash_res, _ = _timed_stage("dashboard", generate_dashboard_config, dataset_dir)
         if dash_res:
             result_payload["artifacts_generated"].append("dashboard_config.json")
 
-        # ── 11. Artifact Contract Verification ──────────────────────────────
-        missing = [
-            a
-            for a in EXPECTED_ARTIFACTS
+        # ── 10. Artifact contract verification ────────────────────────────────
+        missing_artifacts = [
+            a for a in EXPECTED_ARTIFACTS
             if not os.path.exists(os.path.join(dataset_dir, a))
         ]
-        if missing:
+        if missing_artifacts:
             artifact_status = "partial_failure"
             result_payload["status"] = "failed"
             result_payload["error"] = (
-                f"artifact_generation_failed: Missing {', '.join(missing)}"
+                f"artifact_generation_failed: missing {', '.join(missing_artifacts)}"
             )
-            logger.error(f"[{dataset_id}] Missing artifacts: {', '.join(missing)}")
+            logger.error(f"[{dataset_id}] Missing artifacts: {', '.join(missing_artifacts)}")
         else:
             result_payload["status"] = "completed"
 
-    except Exception as e:
-        logger.error(f"[{dataset_id}] Pipeline failed: {str(e)}")
-        result_payload["error"] = f"Pipeline execution failed: {str(e)}"
+    except Exception as exc:
+        logger.exception(f"[{dataset_id}] Pipeline failed: {exc}")
+        result_payload["error"] = f"Pipeline execution failed: {str(exc)}"
         artifact_status = "failure"
 
     total_time = time.time() - overall_start
-    result_payload["execution_time"] = total_time
-    total_time_s = int(total_time)
-
-    print(f"[PIPELINE-END] total_duration={total_time_s}s\n")
-    logger.info(f"[PIPELINE-END] total_duration={total_time_s}s")
+    result_payload["execution_time"] = round(total_time, 3)
 
     logger.info(
-        f"PIPELINE_RUN | User: {user_id} | Dataset: {dataset_id} | Mode: {pipeline_mode} | "
-        f"TotalTime: {total_time:.2f}s | TrainTime: {training_time:.2f}s | "
-        f"ForecastTime: {forecast_time:.2f}s | Rows: {row_count} | ArtifactStatus: {artifact_status}"
+        f"PIPELINE_RUN | User: {_mask_pii(user_id)} | Dataset: {dataset_id} | "
+        f"Mode: {result_payload.get('pipeline_mode')} | TotalTime: {total_time:.2f}s | "
+        f"TrainTime: {training_time:.2f}s | ForecastTime: {forecast_time:.2f}s | "
+        f"Rows: {row_count if 'row_count' in dir() else '?'} | "  # noqa
+        f"ArtifactStatus: {artifact_status}"
     )
+    print(f"[PIPELINE-END] total_duration={int(total_time)}s\n", flush=True)
 
     return result_payload
 
 
+# ── CLI entry point ───────────────────────────────────────────────────────────
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Run the DataInsights.ai ML Pipeline")
     parser.add_argument(
-        "--dataset_path",
-        type=str,
-        required=True,
-        help="Path to the uploaded dataset file",
-    )
-    parser.add_argument(
-        "--user_id", type=str, default="default_user", help="Organizational User ID"
-    )
-    parser.add_argument(
         "--dataset_id",
         type=str,
-        required=False,
-        help="Optional dataset ID from Node backend",
+        required=True,
+        help="Dataset ID (used to locate cleaned_{id}.csv)",
+    )
+    parser.add_argument(
+        "--uploads_root",
+        type=str,
+        required=True,
+        help="Absolute path to the uploads/ root directory",
+    )
+    parser.add_argument(
+        "--user_id",
+        type=str,
+        default="default_user",
+        help="User / organisation identifier (for logging)",
+    )
+    parser.add_argument(
+        "--dataset_dir",
+        type=str,
+        default=None,
+        help="Override directory for ML artifact output",
     )
     args = parser.parse_args()
 
-    res = run_pipeline(args.dataset_path, args.user_id, args.dataset_id)
+    res = run_pipeline(
+        dataset_id=args.dataset_id,
+        uploads_root=args.uploads_root,
+        user_id=args.user_id,
+        dataset_dir_override=args.dataset_dir,
+    )
     print(json.dumps(res, indent=4))
-
-    if res.get("status") == "failed":
-        sys.exit(1)
-    sys.exit(0)
+    sys.exit(0 if res.get("status") == "completed" else 1)

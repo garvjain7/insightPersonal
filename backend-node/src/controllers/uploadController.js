@@ -22,7 +22,7 @@ export const uploadDataset = async (req, res) => {
     const centralStorageDir = path.resolve(process.cwd(), "..", "uploads", "raw");
     const finalDestPath = path.join(centralStorageDir, finalFileName);
 
-    console.log(`[UPLOAD] userEmail: ${userEmail}, datasetId: ${datasetId}, finalName: ${finalFileName}`);
+    console.log(`[UPLOAD] userEmail: ${userEmail.replace(/(.{2})(.*)(@.*)/, "$1***$3")}, datasetId: ${datasetId}, finalName: ${finalFileName}`);
 
     try {
       await fs.mkdir(centralStorageDir, { recursive: true });
