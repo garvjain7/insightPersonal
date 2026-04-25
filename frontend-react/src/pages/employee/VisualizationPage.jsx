@@ -11,22 +11,7 @@ import {
   Activity
 } from 'lucide-react';
 import EmployeeLayout from '../../layout/EmployeeLayout';
-import { getDashboardConfig, getDatasets } from '../../services/api';
-
-const api = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000/api';
-
-const fetchCleanedData = async (datasetId, params = {}) => {
-  const token = sessionStorage.getItem('token');
-  const queryStr = new URLSearchParams();
-  if (params.filters) queryStr.set('filters', JSON.stringify(params.filters));
-  if (params.search) queryStr.set('search', params.search);
-  if (params.page) queryStr.set('page', params.page);
-  if (params.limit) queryStr.set('limit', params.limit || 500);
-  const res = await fetch(`${api}/cleaned-data/${datasetId}?${queryStr}`, {
-    headers: token ? { Authorization: `Bearer ${token}` } : {},
-  });
-  return res.json();
-};
+import { getDashboardConfig, getCleanedData, getChartData } from '../../services/api';
 
 const COLORS = ['#58a6ff', '#3fb950', '#bc8cff', '#d29922', '#f85149', '#79c0ff', '#d2a8ff', '#ffa657'];
 
@@ -95,6 +80,8 @@ const VisualizationPage = () => {
   const [page, setPage] = useState(1);
   const [tablePage, setTablePage] = useState(1);
   const TABLE_PAGE_SIZE = 50;
+  const [chartData, setChartData] = useState([]);
+  const [chartLoading, setChartLoading] = useState(false);
   const [chartType, setChartType] = useState('bar');
   const [aggregation, setAggregation] = useState('sum');
   
@@ -105,8 +92,36 @@ const VisualizationPage = () => {
   const [selectedDataset, setSelectedDataset] = useState(null);
   const [emptyStateMessage, setEmptyStateMessage] = useState('');
 
-  const isInitialized = useRef(false);
-  const NO_DATA_MESSAGE = 'You need data first. Upload a dataset and complete cleaning before using Visualize.';
+  const loadChartData = useCallback(async () => {
+    if (!datasetId || !chartXAxis || !chartYAxis) {
+      setChartData([]);
+      return;
+    }
+    setChartLoading(true);
+    try {
+      const res = await getChartData(datasetId, {
+        xAxis: chartXAxis,
+        yAxis: chartYAxis,
+        aggregation,
+        filters: appliedFilters,
+        limit: 10
+      });
+      if (res.success) {
+        setChartData(res.data);
+      } else {
+        setChartData([]);
+      }
+    } catch (err) {
+      console.error('Chart data load failed:', err);
+      setChartData([]);
+    } finally {
+      setChartLoading(false);
+    }
+  }, [datasetId, chartXAxis, chartYAxis, aggregation, appliedFilters]);
+
+  useEffect(() => {
+    loadChartData();
+  }, [loadChartData]);
 
   const loadData = useCallback(async (currentFilters = {}, currentSearch = '', currentPage = 1) => {
     if (!datasetId) {
@@ -118,7 +133,7 @@ const VisualizationPage = () => {
     setEmptyStateMessage('');
     try {
       const [cleanedRes, dashRes] = await Promise.all([
-        fetchCleanedData(datasetId, { filters: currentFilters, search: currentSearch, page: currentPage, limit: 500 }),
+        getCleanedData(datasetId, { filters: currentFilters, search: currentSearch, page: currentPage, limit: 500 }),
         getDashboardConfig(datasetId).catch(() => null),
       ]);
       
@@ -254,61 +269,6 @@ const VisualizationPage = () => {
     return data.headers.filter(h => h !== 'Unnamed: 0.1' && h !== 'Unnamed: 0');
   }, [data?.headers]);
 
-  const chartData = useMemo(() => {
-    if (!data?.rows || !chartXAxis || !chartYAxis || !headers.length) return [];
-    
-    const isNumericY = data.columnTypes?.[chartYAxis] === 'numeric';
-    const grouped = {};
-    const counts = {};
-    const maxs = {};
-    const mins = {};
-    const sums = {};
-    
-    for (let i = 0; i < data.rows.length; i++) {
-      const row = data.rows[i];
-      const key = row[chartXAxis] || 'Unknown';
-      const val = row[chartYAxis];
-      
-      if (isNumericY) {
-        const numVal = parseFloat(val);
-        if (!isNaN(numVal)) {
-          grouped[key] = (grouped[key] || 0) + numVal;
-          sums[key] = (sums[key] || 0) + numVal;
-          counts[key] = (counts[key] || 0) + 1;
-          maxs[key] = Math.max(maxs[key] || -Infinity, numVal);
-          mins[key] = mins[key] === undefined ? numVal : Math.min(mins[key], numVal);
-        }
-      } else {
-        grouped[key] = (grouped[key] || 0) + 1;
-        counts[key] = (counts[key] || 0) + 1;
-      }
-    }
-    
-    const entries = Object.entries(grouped);
-    const result = [];
-    
-    for (let i = 0; i < entries.length; i++) {
-      const [name, value] = entries[i];
-      result.push({
-        name: String(name).substring(0, 18),
-        value: isNumericY 
-          ? (aggregation === 'sum' ? Math.round((sums[name] || 0) * 100) / 100 : 
-             aggregation === 'count' ? counts[name] || 0 :
-             aggregation === 'avg' ? Math.round(((sums[name] || 0) / (counts[name] || 1)) * 100) / 100 :
-             aggregation === 'max' ? Math.round((maxs[name] || 0) * 100) / 100 :
-             aggregation === 'min' ? Math.round((mins[name] || 0) * 100) / 100 : value)
-          : value,
-        rawValue: value,
-        count: counts[name] || 0,
-        max: maxs[name],
-        min: mins[name]
-      });
-    }
-    
-    result.sort((a, b) => b.value - a.value);
-    return result.slice(0, 10);
-  }, [data, chartXAxis, chartYAxis, aggregation, headers]);
-
   const chartStats = useMemo(() => {
     if (!chartData.length) return null;
     const isNumericY = data?.columnTypes?.[chartYAxis] === 'numeric';
@@ -324,6 +284,13 @@ const VisualizationPage = () => {
   }, [chartData, chartYAxis, data]);
 
   const renderMainChart = () => {
+    if (chartLoading) return (
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: 'var(--text-muted)', fontSize: 13 }}>
+        <Loader size={20} style={{ marginRight: 8, animation: 'spin 1s linear infinite' }} />
+        Loading chart...
+      </div>
+    );
+    
     if (!chartData.length) return (
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: 'var(--text-muted)', fontSize: 13 }}>
         Select X and Y axes to generate a chart

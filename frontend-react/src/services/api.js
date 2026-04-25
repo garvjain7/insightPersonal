@@ -106,8 +106,23 @@ export const getDashboardConfig = async (datasetId) => {
     }
 };
 
-export const getAnalytics = async (datasetId) => {
-    const response = await api.get('/analytics', { params: { datasetId } });
+export const getCleanedData = async (datasetId, params = {}) => {
+    const queryStr = new URLSearchParams();
+    if (params.filters) queryStr.set('filters', JSON.stringify(params.filters));
+    if (params.search) queryStr.set('search', params.search);
+    if (params.page) queryStr.set('page', params.page);
+    if (params.limit) queryStr.set('limit', params.limit || 500);
+    const response = await api.get(`/cleaned-data/${datasetId}?${queryStr}`);
+    return response.data;
+};
+
+export const getChartData = async (datasetId, chartParams) => {
+    const response = await api.post(`/chart-data/${datasetId}`, chartParams);
+    return response.data;
+};
+
+export const getCleanedDatasets = async () => {
+    const response = await api.get('/cleaned-datasets');
     return response.data;
 };
 

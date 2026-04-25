@@ -562,6 +562,29 @@ export const finalizeDataset = async (req, res) => {
       [datasetId]
     );
 
+    // ── Run ML Pipeline to generate dashboard config ─────────────────────────
+    try {
+      const pipelineResult = await runPython(path.join(process.cwd(), 'ml_engine', 'run_pipeline.py'), [
+        datasetId,
+        UPLOADS_ROOT,
+        user.user_id.toString(),
+      ]);
+
+      if (pipelineResult.status === "success") {
+        // Load and store dashboard config in schema_json
+        const dashboardPath = path.join(UPLOADS_ROOT, 'artifacts', datasetId, 'dashboard_config.json');
+        if (fs.existsSync(dashboardPath)) {
+          const dashboardConfig = JSON.parse(fs.readFileSync(dashboardPath, 'utf8'));
+          await pool.query(
+            "UPDATE datasets SET schema_json = schema_json || $2 WHERE dataset_id = $1",
+            [datasetId, JSON.stringify({ dashboard_config: dashboardConfig })]
+          );
+        }
+      }
+    } catch (pipelineErr) {
+      console.warn("ML Pipeline failed, but cleaning is complete:", pipelineErr.message);
+    }
+
     // ── Log activity ──────────────────────────────────────────────────────────
     await logCleaningActivity(
       user.user_id, user.full_name, userEmail,

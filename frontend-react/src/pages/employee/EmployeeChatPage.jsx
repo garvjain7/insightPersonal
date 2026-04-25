@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { Send, Bot, User, LayoutDashboard, Trash2 } from 'lucide-react';
-import { askQuery, getDatasets, startChatSession, endChatSession, requestPermission } from '../../services/api';
+import { askQuery, getCleanedDatasets, startChatSession, endChatSession, requestPermission } from '../../services/api';
 
 import EmployeeLayout from '../../layout/EmployeeLayout';
 
@@ -199,17 +199,19 @@ const EmployeeChatPage = () => {
   useEffect(() => {
     const loadDatasets = async () => {
       try {
-        const res = await getDatasets();
+        const res = await getCleanedDatasets();
         if (res.success && res.data) {
-          const readyDatasets = res.data.filter(d => d.status === 'completed' || d.status === 'ready' || d.status === 'cleaned');
-          setAvailableDatasets(readyDatasets);
+          setAvailableDatasets(res.data);
 
-          if (!datasetId && readyDatasets.length > 0) {
-            setSelectedDataset(readyDatasets[0]);
-            fetchDatasetInfo(readyDatasets[0].dataset_id || readyDatasets[0].id);
+          if (!datasetId && res.data.length > 0) {
+            setSelectedDataset(res.data[0]);
+            fetchDatasetInfo(res.data[0].dataset_id);
           } else if (datasetId) {
-            const selected = readyDatasets.find(d => (d.dataset_id || d.id) === datasetId);
-            if (selected) { setSelectedDataset(selected); fetchDatasetInfo(datasetId); }
+            const selected = res.data.find(d => d.dataset_id === datasetId);
+            if (selected) { 
+              setSelectedDataset(selected); 
+              fetchDatasetInfo(datasetId); 
+            }
           }
         }
       } catch (err) {
@@ -222,7 +224,7 @@ const EmployeeChatPage = () => {
 
   useEffect(() => {
     if (selectedDataset) {
-      const dsId = selectedDataset.dataset_id || selectedDataset.id;
+      const dsId = selectedDataset.dataset_id;
       startChatSession(dsId).catch(console.error);
       
       return () => {
@@ -234,7 +236,7 @@ const EmployeeChatPage = () => {
   // Handle Dynamic Permission Request from HTML button
   useEffect(() => {
     window.requestAccess = async (type) => {
-      const dsId = selectedDataset?.dataset_id || selectedDataset?.id;
+      const dsId = selectedDataset?.dataset_id;
       if (!dsId) return;
       
       try {
@@ -259,7 +261,7 @@ const EmployeeChatPage = () => {
     if (!msg || isLoading) return;
     
     const currentDs = selectedDataset;
-    const dsId = currentDs?.dataset_id || currentDs?.id;
+    const dsId = currentDs?.dataset_id;
     
     setInput('');
     const id = msgId.current++;
@@ -430,18 +432,18 @@ const EmployeeChatPage = () => {
             <div style={{ flex: 1 }}>
               <div style={{ fontSize: 15, fontWeight: 600, color: '#fff' }}>DataInsights Chatbot</div>
               {availableDatasets.length > 1 ? (
-                <select className="emp-filter-select" value={selectedDataset?.dataset_id || selectedDataset?.id || ''}
+                <select className="emp-filter-select" value={selectedDataset?.dataset_id || ''}
                   onChange={(e) => {
-                    const ds = availableDatasets.find(d => (d.dataset_id || d.id) === e.target.value);
+                    const ds = availableDatasets.find(d => d.dataset_id === e.target.value);
                     if (ds) {
                       setSelectedDataset(ds);
                       setDatasetInfo(null);
-                      fetchDatasetInfo(ds.dataset_id || ds.id);
+                      fetchDatasetInfo(ds.dataset_id);
                       setMessages([{ id: 0, role: 'ai', content: `👋 Switched to **${ds.name}**. Ask me about **totals**, **trends**, **top performers**, or anything about your data!`, time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) }]);
                       msgId.current = 1;
                     }
                   }} style={{ marginTop: 4, fontSize: 10, minWidth: 150 }}>
-                  {availableDatasets.map(ds => <option key={ds.dataset_id || ds.id} value={ds.dataset_id || ds.id}>{ds.name}</option>)}
+                  {availableDatasets.map(ds => <option key={ds.dataset_id} value={ds.dataset_id}>{ds.name}</option>)}
                 </select>
               ) : (
                 <div style={{ fontFamily: "'DM Mono', monospace", fontSize: 9, color: 'var(--text-muted)', marginTop: 2 }}>
