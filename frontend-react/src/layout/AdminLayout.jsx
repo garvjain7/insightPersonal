@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import {
   LayoutDashboard, FileText, Shield, Users, Database,
-  Settings, LogOut, Search, Bell, Activity,
+  Settings, LogOut, Bell, Activity,
   Menu, X, UploadCloud
 } from 'lucide-react';
 import { useNavigate, useLocation, Link } from 'react-router-dom';

@@ -1,18 +1,18 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
-  BarChart, Bar, XAxis, YAxis, CartesianGrid,
+  XAxis, YAxis, CartesianGrid,
   Tooltip, ResponsiveContainer, Cell, PieChart, Pie, AreaChart, Area
 } from 'recharts';
 import {
-  Upload, Database, BarChart3, MessageSquare, Sparkles, FileText,
-  ArrowRight, Clock, CheckCircle2, AlertCircle, TrendingUp,
-  Loader, RefreshCw, Activity, Layers, HardDrive
+  Database, BarChart3, MessageSquare, Sparkles, FileText,
+  ArrowRight, CheckCircle2, AlertCircle,
+  Loader, RefreshCw, Activity, HardDrive
 } from 'lucide-react';
 import EmployeeLayout from '../../layout/EmployeeLayout';
-import { getDatasets, getUserStats } from '../../services/api';
+import { getDatasets } from '../../services/api';
 
-const COLORS = ['#58a6ff', '#3fb950', '#bc8cff', '#d29922', '#f85149', '#79c0ff', '#d2a8ff', '#ffa657'];
+
 
 const CustomTooltip = ({ active, payload, label }) => {
   if (!active || !payload?.length) return null;
@@ -61,7 +61,7 @@ const EmployeeDashboardPage = () => {
   const userName = sessionStorage.getItem('userName') || 'Employee';
   const [datasets, setDatasets] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState('');
+  const [, setError] = useState('');
 
   useEffect(() => {
     loadDashboard();
@@ -323,7 +323,7 @@ const EmployeeDashboardPage = () => {
                           ))}
                         </defs>
                         <Pie data={statusData} dataKey="value" nameKey="name" innerRadius={40} outerRadius={60} paddingAngle={3}
-                          label={({ name, percent }) => `${(percent * 100).toFixed(0)}%`}
+                          label={({ percent }) => `${(percent * 100).toFixed(0)}%`}
                           labelLine={{ stroke: '#6b7694', strokeWidth: 1 }}>
                           {statusData.map((entry, i) => (
                             <Cell key={i} fill={`url(#dashPieGrad${i})`} stroke="rgba(22,27,34,0.5)" strokeWidth={2} />
@@ -461,7 +461,7 @@ const EmployeeDashboardPage = () => {
                 <div>
                   <div style={{ fontSize: 14, fontWeight: 700, color: '#fff' }}>Ask AI about your data</div>
                   <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 2 }}>
-                    "What is the total revenue by region?" — Get instant answers from {readyDatasets.length} dataset{readyDatasets.length !== 1 ? 's' : ''}
+                    &quot;What is the total revenue by region?&quot; — Get instant answers from {readyDatasets.length} dataset{readyDatasets.length !== 1 ? 's' : ''}
                   </div>
                 </div>
               </div>

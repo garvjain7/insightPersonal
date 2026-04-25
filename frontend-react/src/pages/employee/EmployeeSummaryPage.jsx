@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { MessageSquare, Sparkles, Download, FileText, Database } from 'lucide-react';
+import { MessageSquare, Sparkles, Download } from 'lucide-react';
 import EmployeeLayout from '../../layout/EmployeeLayout';
 import { getAnalysis, getCleanedData, getDatasets } from '../../services/api';
 

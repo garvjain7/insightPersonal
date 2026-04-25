@@ -1,4 +1,4 @@
-import React, { useEffect, useRef } from 'react';
+import { useEffect, useRef } from 'react';
 import { Link } from 'react-router-dom';
 import '../styles/LandingPage.css';
 
@@ -191,7 +191,7 @@ export default function LandingPage() {
                 <svg viewBox="0 0 24 24"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
               </div>
               <h3>Text-to-SQL query engine</h3>
-              <p>When the chatbot can't answer from the summary, it generates a validated SQL query — checked against permissions before a single row is returned.</p>
+              <p>When the chatbot can&apos;t answer from the summary, it generates a validated SQL query — checked against permissions before a single row is returned.</p>
               <span className="feature-tag">Query engine</span>
             </div>
 
@@ -288,7 +288,7 @@ export default function LandingPage() {
           </div>
           <div className="testimonials-grid reveal">
             <div className="testimonial-card">
-              <div className="testimonial-quote">"</div>
+              <div className="testimonial-quote">&quot;</div>
               <p className="testimonial-text">We went from waiting three days for a data analyst to answer a question to getting an answer in thirty seconds — without compromising our data governance policies.</p>
               <div className="testimonial-author">
                 <div className="testimonial-avatar">RK</div>
@@ -299,7 +299,7 @@ export default function LandingPage() {
               </div>
             </div>
             <div className="testimonial-card">
-              <div className="testimonial-quote">"</div>
+              <div className="testimonial-quote">&quot;</div>
               <p className="testimonial-text">The fact that the LLM never sees our raw rows was the dealbreaker for our security team. Every other platform we evaluated failed that test. This one passed it by design.</p>
               <div className="testimonial-author">
                 <div className="testimonial-avatar">SL</div>
@@ -310,7 +310,7 @@ export default function LandingPage() {
               </div>
             </div>
             <div className="testimonial-card">
-              <div className="testimonial-quote">"</div>
+              <div className="testimonial-quote">&quot;</div>
               <p className="testimonial-text">Our compliance officer finally stopped worrying about our analytics stack. Audit logs, permission enforcement, local inference — it checks every box we have.</p>
               <div className="testimonial-author">
                 <div className="testimonial-avatar">AM</div>

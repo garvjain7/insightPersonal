@@ -105,6 +105,7 @@ export default function EmployeesPage() {
 
   useEffect(() => {
     fetchData();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [roleFilter]);
 
   const handleRoleChange = async (email, newRole) => {

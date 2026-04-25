@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { Send, Bot, User, Copy, Check, Sparkles, LayoutDashboard, Trash2, Database } from 'lucide-react';
+import { Send, Bot, User, LayoutDashboard, Trash2 } from 'lucide-react';
 import { askQuery, getDatasets, startChatSession, endChatSession, requestPermission } from '../../services/api';
 
 import EmployeeLayout from '../../layout/EmployeeLayout';
@@ -115,7 +115,7 @@ const buildSmartSuggestions = (datasetInfo) => {
   return deduped.slice(0, 10);
 };
 
-function getResponse(q) {
+function getResponse() {
   return {
     text: "Please select a dataset from the dropdown above before asking questions.",
   };
@@ -244,7 +244,7 @@ const EmployeeChatPage = () => {
         } else {
           alert(`Error: ${res.message || 'Failed to submit request'}`);
         }
-      } catch (err) {
+      } catch {
         alert("Failed to send request. Please try again.");
       }
     };
@@ -434,7 +434,6 @@ const EmployeeChatPage = () => {
                   onChange={(e) => {
                     const ds = availableDatasets.find(d => (d.dataset_id || d.id) === e.target.value);
                     if (ds) {
-                      isInitialized?.current && (isInitialized.current = false);
                       setSelectedDataset(ds);
                       setDatasetInfo(null);
                       fetchDatasetInfo(ds.dataset_id || ds.id);
@@ -458,7 +457,7 @@ const EmployeeChatPage = () => {
 
           {/* Messages */}
           <div style={{ flex: 1, overflowY: 'auto', padding: 20, display: 'flex', flexDirection: 'column', gap: 16 }}>
-            {messages.map((msg, idx) => {
+            {messages.map((msg) => {
               const isUser = msg.role === 'user';
               const isImageError = !isUser && msg.content && (msg.content.toLowerCase().includes("does not support image") || msg.content.toLowerCase().includes("cannot read image") || msg.content.toLowerCase().includes("image input not supported"));
               return (

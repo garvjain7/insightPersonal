@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { Navigate } from 'react-router-dom';
-import { Filter, X, Loader, Database, Users, Clock, Eye, Sparkles, BarChart3, FileText, Upload, Check, Shield } from 'lucide-react';
+import { Filter, X, Loader, Database, Users, Clock, Sparkles, BarChart3, FileText, Upload, Check, Shield } from 'lucide-react';
 import AdminLayout from '../../layout/AdminLayout';
 import { getActivityLogs, getActivityStats, getDatasetsAdmin } from '../../services/api';
 
@@ -126,6 +126,7 @@ export default function LogsPage() {
 
   useEffect(() => {
     fetchData();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [employeeFilter, eventFilter, statusFilter, datasetFilter]);
 
   if (!isAdmin) return <Navigate to="/employee/datasets" replace />;

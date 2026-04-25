@@ -1,36 +1,15 @@
 import { useState, useEffect, useMemo } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { ArrowRight, Filter, BarChart3, AlertTriangle, CheckCircle2, Eye, ChevronDown, Search, Sparkles, Upload, FileSpreadsheet, AlertCircle, Database, TrendingUp, Activity, PieChart as PieChartIcon, RefreshCw, Download, FileText, Info, Clock, HardDrive, Layers, Zap } from 'lucide-react';
-import { PieChart, Pie, Cell, BarChart as RechartsBarChart, LineChart, Line, AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, ResponsiveContainer, Legend, Bar } from 'recharts';
 import axios from 'axios';
+import { Search, Sparkles, BarChart3, FileText, Activity, TrendingUp, Download, CheckCircle2, AlertTriangle, AlertCircle, RefreshCw, Database, FileSpreadsheet, Layers, Clock, Eye, Info, Zap } from 'lucide-react';
 import EmployeeLayout from '../../layout/EmployeeLayout';
 import { getDatasets, downloadDataset } from '../../services/api';
-
-const CHART_COLORS = ['#58a6ff', '#3fb950', '#bc8cff', '#d29922', '#f85149', '#79c0ff', '#d2a8ff', '#ffa657'];
-
-const TooltipBox = ({ active, payload, label }) => {
-  if (!active || !payload?.length) return null;
-  return (
-    <div style={{
-      background: 'rgba(22,27,34,0.96)', border: '1px solid var(--border-color)',
-      borderRadius: 8, padding: '8px 12px', fontSize: 12, maxWidth: 220,
-    }}>
-      {label && <div style={{ color: 'var(--text-muted)', marginBottom: 4, fontSize: 11 }}>{label}</div>}
-      {payload.map((p, i) => (
-        <div key={i} style={{ color: p.color || '#58a6ff', fontWeight: 600 }}>
-          {p.name}: {typeof p.value === 'number' ? p.value.toLocaleString() : p.value}
-        </div>
-      ))}
-    </div>
-  );
-};
-
 const typeColors = {
-  string: { bg: 'rgba(188,140,255,0.1)', color: '#bc8cff' },
-  float64: { bg: 'rgba(63,185,80,0.1)', color: '#3fb950' },
-  int64: { bg: 'rgba(63,185,80,0.1)', color: '#3fb950' },
+  numeric: { bg: 'rgba(63,185,80,0.1)', color: '#3fb950' },
+  string: { bg: 'rgba(88,166,255,0.1)', color: '#58a6ff' },
   datetime: { bg: 'rgba(210,153,34,0.1)', color: '#d29922' },
 };
+
 
 const inferredColors = {
   numeric: { bg: 'rgba(63,185,80,0.08)', color: '#3fb950', label: 'NUM' },
@@ -53,14 +32,12 @@ const DatasetAnalysisPage = () => {
   const [typeFilter, setTypeFilter] = useState('all');
   const [nullFilter, setNullFilter] = useState('all');
   const [viewMode, setViewMode] = useState('analysis'); // analysis | data | dashboard | summary | original
-  const [showPreview, setShowPreview] = useState(false);
   const [summaryDataMode, setSummaryDataMode] = useState('cleaned'); // cleaned | original
   const [loading, setLoading] = useState(true);
   const [analysisLoading, setAnalysisLoading] = useState(false);
   const [availableDatasets, setAvailableDatasets] = useState([]);
   const [selectedDataset, setSelectedDataset] = useState(null);
   const [analysisData, setAnalysisData] = useState(null);
-  const [dashboardData, setDashboardData] = useState(null);
   const [analysisError, setAnalysisError] = useState(null);
   const [dataPage, setDataPage] = useState(1);
   const [dataTotalRows, setDataTotalRows] = useState(0);
@@ -70,7 +47,6 @@ const DatasetAnalysisPage = () => {
   const [loadingOriginal, setLoadingOriginal] = useState(false);
   const [originalAnalysis, setOriginalAnalysis] = useState(null);
   const [vizData, setVizData] = useState(null);
-  const [vizLoading, setVizLoading] = useState(false);
 
   const API_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000/api';
 
@@ -107,6 +83,7 @@ const DatasetAnalysisPage = () => {
     };
 
     loadData();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [datasetId]);
 
   // Load analysis data when dataset is selected
@@ -125,7 +102,7 @@ const DatasetAnalysisPage = () => {
         // Load analysis
         const response = await axios.get(`${API_URL}/datasets/${dsId}/analysis`, { headers: getAuthHeaders() });
         if (response.data && response.data.columns) {
-          const cols = response.data.columns.map((col, idx) => ({
+          const cols = response.data.columns.map((col) => ({
             name: col.name,
             type: col.dtype || 'string',
             nulls: col.null_count || 0,
@@ -141,15 +118,7 @@ const DatasetAnalysisPage = () => {
           setAnalysisError('No analysis data available');
         }
 
-        // Load dashboard config
-        try {
-          const dashRes = await axios.get(`${API_URL}/dashboard/${dsId}`, { headers: getAuthHeaders() });
-          if (dashRes.data && dashRes.data.charts) {
-            setDashboardData(dashRes.data);
-          }
-        } catch (dashErr) {
-          console.warn('Dashboard not available:', dashErr.message);
-        }
+
 
         // Load cleaned data
         try {
@@ -195,7 +164,6 @@ const DatasetAnalysisPage = () => {
       const dsId = selectedDataset.dataset_id || selectedDataset.id;
       if (!dsId) return;
 
-      setVizLoading(true);
       try {
         // First try to use existing cleaned data if available
         let rowsToUse = cleanedData;
@@ -235,7 +203,6 @@ const DatasetAnalysisPage = () => {
 
         if (!rowsToUse || rowsToUse.length === 0) {
           setVizData(null);
-          setVizLoading(false);
           return;
         }
 
@@ -299,7 +266,6 @@ const DatasetAnalysisPage = () => {
         console.warn('Could not load visualization data:', err.message);
         setVizData(null);
       }
-      setVizLoading(false);
     };
 
     loadVizData();
@@ -338,6 +304,7 @@ const DatasetAnalysisPage = () => {
       .sort((a, b) => b.count - a.count).slice(0, 10);
 
     return { chartData, countData };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [vizData]);
 
   // Update vizData when chart selections change
@@ -548,7 +515,6 @@ const DatasetAnalysisPage = () => {
   const selectAll = () => setColumns(prev => prev.map(c => ({ ...c, selected: true })));
   const selectNone = () => setColumns(prev => prev.map(c => ({ ...c, selected: false })));
   const selectNulls = () => setColumns(prev => prev.map(c => ({ ...c, selected: c.nulls > 0 })));
-  const selectNumeric = () => setColumns(prev => prev.map(c => ({ ...c, selected: c.inferred === 'numeric' })));
 
   const filtered = columns.filter(c => {
     if (search && !c.name.toLowerCase().includes(search.toLowerCase())) return false;
@@ -592,7 +558,6 @@ const DatasetAnalysisPage = () => {
                   setSelectedDataset(ds);
                   setColumns([]);
                   setAnalysisData(null);
-                  setDashboardData(null);
                   setCleanedData([]);
                   setDataPage(1);
                   navigate(`/employee/analysis?ds=${ds.dataset_id || ds.id}&name=${encodeURIComponent(ds.name || '')}`, { replace: true });

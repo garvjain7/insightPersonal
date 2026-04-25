@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Activity, Database, Upload, ChevronDown } from 'lucide-react';
+import { Activity, Database, ChevronDown } from 'lucide-react';
 import { useNavigate, useLocation, Link } from 'react-router-dom';
 import { getDatasets } from '../services/api';
 

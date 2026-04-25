@@ -44,7 +44,7 @@ const DatasetsPage = () => {
             if (res.success) {
                 setDatasetAssignments(prev => ({ ...prev, [dsId]: res.users }));
             }
-        } catch (err) {
+        } catch {
             console.warn(`Failed to fetch assignments for ${dsId}`);
         }
     };
@@ -113,7 +113,7 @@ const DatasetsPage = () => {
         e.stopPropagation();
         try {
             await downloadDataset(ds.dataset_id || ds.id, ds.name || ds.file_name);
-        } catch (err) {
+        } catch {
             alert('Download failed');
         }
     };

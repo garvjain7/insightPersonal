@@ -1,42 +1,12 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Search, FileText, Eye, ChevronDown, ChevronUp, RefreshCw, BarChart3, Trash2, AlertTriangle, X, Sparkles, Plus, Database, Loader } from 'lucide-react';
+import { Search, FileText, Eye, RefreshCw, BarChart3, Trash2, AlertTriangle, X, Sparkles, Plus, Database, Loader } from 'lucide-react';
 import { getDatasets, deleteDataset, getDatasetPreview, getAvailableDatasetsToRequest, requestPermission } from '../../services/api';
 
 import EmployeeLayout from '../../layout/EmployeeLayout';
 
 
-const MOCK_DATASETS = [
-  {
-    id: 'ds-001', name: 'Customer_Data', type: 'xlsx', status: 'cleaned',
-    source: 'acme-prod', path: '/data/crm/customers.xlsx',
-    rows: 12450, cols: 24, size: '8.1 MB', version: 'v3',
-    updated: '2 days ago',
-    uploadedBy: 'John Admin',
-    versions: [
-      { tag: 'v3', desc: 'Cleaned · 12,450 rows', date: 'Jan 18 2025', current: true },
-      { tag: 'v2', desc: 'Cleaned · 12,800 rows', date: 'Dec 4 2024' },
-      { tag: 'v1', desc: 'Raw · 13,100 rows', date: 'Nov 20 2024' },
-    ]
-  },
-  {
-    id: 'ds-002', name: 'Q3_Sales_Report', type: 'csv', status: 'cleaning',
-    source: 'acme-prod', path: '/data/sales/q3_2024.csv',
-    rows: 4521, cols: 12, size: '2.4 MB', version: 'v1',
-    updated: '12 min ago', cleaningProgress: 40, cleaningStep: '2/5 — Removing duplicates',
-    uploadedBy: 'Sarah Manager',
-    versions: [
-      { tag: 'v1', desc: 'Cleaning in progress…', date: 'Jan 20 2025', active: true },
-    ]
-  },
-  {
-    id: 'ds-003', name: 'Finance_Q2_2024', type: 'xlsx', status: 'not_cleaned',
-    source: 'acme-prod', path: '/data/finance/q2_2024.xlsx',
-    rows: 3200, cols: 9, size: '1.8 MB', version: 'v1',
-    updated: '5 days ago', versions: [],
-    uploadedBy: 'John Admin',
-  },
-];
+
 
 const typeIcons = { csv: '📄', xlsx: '📊', json: '🗂' };
 const typeColors = {
@@ -128,7 +98,7 @@ const EmployeeDatasetsPage = () => {
       } else {
         setRequestStatus(prev => ({ ...prev, [dsId]: 'error' }));
       }
-    } catch (err) {
+    } catch {
       setRequestStatus(prev => ({ ...prev, [dsId]: 'error' }));
     }
   };

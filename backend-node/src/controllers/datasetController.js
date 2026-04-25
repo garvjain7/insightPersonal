@@ -1014,6 +1014,7 @@ export const getDatasetPreview = async (req, res) => {
             totalOutliers: statsResult.total_outliers,
             columnNulls: statsResult.column_nulls,
             columns: statsResult.columns,
+            numericColumns: statsResult.numeric_columns || [],
           };
         }
       }

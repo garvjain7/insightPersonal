@@ -2,30 +2,12 @@ import { useState, useEffect, Fragment } from 'react';
 import { Navigate, useNavigate } from 'react-router-dom';
 
 
-import { Shield, Check, X, Download, Loader, Users, Database, Clock, UserPlus } from 'lucide-react';
+import { Shield, Check, X, Loader, Users, Database, Clock } from 'lucide-react';
 import AdminLayout from '../../layout/AdminLayout';
-import { getUsers, getDatasets, updateUserRole, getPendingUsers, approveUser, getPendingPermissions, resolvePermission } from '../../services/api';
+import { getUsers, getDatasets, getPendingUsers, approveUser, getPendingPermissions, resolvePermission } from '../../services/api';
 
 
-function getPermClass(perm) {
-  switch (perm) {
-    case 'VIEW': return 'admin-perm-view';
-    case 'INSERT': return 'admin-perm-insert';
-    case 'UPDATE': return 'admin-perm-update';
-    case 'DELETE': return 'admin-perm-delete';
-    default: return '';
-  }
-}
 
-function getBadgeClass(perm) {
-  switch (perm) {
-    case 'VIEW': return 'admin-badge blue';
-    case 'INSERT': return 'admin-badge green';
-    case 'UPDATE': return 'admin-badge amber';
-    case 'DELETE': return 'admin-badge red';
-    default: return 'admin-badge gray';
-  }
-}
 
 function formatDate(dateStr) {
   if (!dateStr) return '—';
@@ -34,8 +16,6 @@ function formatDate(dateStr) {
 
 export default function PermissionPage() {
   const role = sessionStorage.getItem('role');
-  if (role !== 'admin') return <Navigate to="/datasets" />;
-
   const [activeTab, setActiveTab] = useState(0);
   const [users, setUsers] = useState([]);
   const [datasets, setDatasets] = useState([]);
@@ -83,14 +63,6 @@ export default function PermissionPage() {
     }
   };
 
-  const handleRoleChange = async (email, newRole) => {
-    try {
-      await updateUserRole(email, newRole);
-      fetchData();
-    } catch (err) {
-      console.error('Failed to update role:', err);
-    }
-  };
 
   const navigate = useNavigate();
 
@@ -118,7 +90,8 @@ export default function PermissionPage() {
 
   const pendingCount = pendingUsers.length;
   const activeCount = users.filter(u => u.is_active).length;
-  const totalCount = users.length;
+
+  if (role !== 'admin') return <Navigate to="/datasets" />;
 
   const tabs = [
     { label: 'Access Requests', count: pendingPermissions.length, icon: Shield },
@@ -367,7 +340,7 @@ export default function PermissionPage() {
                 </tr>
               </thead>
               <tbody>
-                {datasets.map((ds, i) => (
+                {datasets.map((ds) => (
                   <tr key={ds.dataset_id || ds.id}>
                     <td>{ds.name || ds.filename || 'Unknown'}</td>
                     <td>

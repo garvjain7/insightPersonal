@@ -164,8 +164,9 @@ const VisualizationPage = () => {
 
   useEffect(() => { 
     if (datasetId) {
-      loadData(appliedFilters, search, page); 
+      loadData(appliedFilters, search, page);
     }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [datasetId]);
 
   useEffect(() => {
@@ -208,6 +209,7 @@ const VisualizationPage = () => {
       }
     };
     loadDatasets();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [datasetId]);
 
   const applyFilters = useCallback(() => { 
@@ -319,7 +321,7 @@ const VisualizationPage = () => {
     const max = Math.max(...chartData.map(d => d.rawValue));
     const min = Math.min(...chartData.filter(d => d.rawValue > 0).map(d => d.rawValue), 0);
     return { totalSum, totalCount, avg, max, min };
-  }, [chartData, chartYAxis, data, aggregation]);
+  }, [chartData, chartYAxis, data]);
 
   const renderMainChart = () => {
     if (!chartData.length) return (

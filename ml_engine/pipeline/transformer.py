@@ -223,7 +223,7 @@ def apply_ai_type_conversion(df: pd.DataFrame) -> tuple[pd.DataFrame, dict]:
         numeric_rate = numeric_attempt.notna().sum() / len(non_null)
         if numeric_rate >= 0.85:
             df[col] = pd.to_numeric(df[col], errors="coerce")
-            decisions[col] = "converted_to_numeric"
+            decisions[col] = "Float"
             continue
 
         # Datetime check
@@ -231,7 +231,7 @@ def apply_ai_type_conversion(df: pd.DataFrame) -> tuple[pd.DataFrame, dict]:
         date_rate = date_attempt.notna().sum() / len(non_null)
         if date_rate >= 0.75:
             df[col] = pd.to_datetime(df[col], errors="coerce", infer_datetime_format=True)
-            decisions[col] = "converted_to_datetime"
+            decisions[col] = "Date"
 
     return df, decisions
 
@@ -281,7 +281,7 @@ def apply_ai_outlier_handling(df: pd.DataFrame) -> tuple[pd.DataFrame, dict]:
         outlier_count = int(((df[col] < lower) | (df[col] > upper)).sum())
         if outlier_count > 0:
             df[col] = df[col].clip(lower=lower, upper=upper)
-            decisions[col] = f"iqr_capping ({outlier_count} outliers capped)"
+            decisions[col] = "IQR capping"
 
     return df, decisions
 
@@ -307,11 +307,9 @@ def apply_feature_engineering(df: pd.DataFrame, params: dict) -> pd.DataFrame:
             logger.warning(f"Skipping feature '{new_col}': missing inputs or name")
             continue
 
-        numeric_inputs = [
-            pd.to_numeric(df[c], errors="coerce").fillna(0) if pd.api.types.is_numeric_dtype(df[c]) 
-            else pd.Series(0, index=df.index) 
-            for c in inputs
-        ]
+        # Always coerce input values to numeric. Many CSV imports keep numeric-looking
+        # columns as object dtype, which should still be treated as numeric for feature operations.
+        numeric_inputs = [pd.to_numeric(df[c], errors="coerce").fillna(0) for c in inputs]
 
         try:
             if operation == "normalize":
@@ -445,6 +443,7 @@ def get_stats(working_path: str) -> dict:
         "total_outliers": int(outlier_mask.values.sum()) if not outlier_mask.empty else 0,
         "column_nulls": df.isnull().sum().to_dict(),
         "columns": list(df.columns),
+        "numeric_columns": list(df.select_dtypes(include=[np.number]).columns),
     }
 
 

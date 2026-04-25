@@ -1,5 +1,5 @@
-import React, { useState, useEffect } from 'react';
-import { X, Search, UserPlus, UserMinus, Loader, Check, AlertCircle } from 'lucide-react';
+import { useState, useEffect } from 'react';
+import { X, Search, UserPlus, UserMinus, Loader, AlertCircle } from 'lucide-react';
 import { getUsers, assignDataset, unassignDataset, getDatasetAssignments } from '../../services/api';
 
 const AssignUserModal = ({ dataset, onClose, onUpdate }) => {

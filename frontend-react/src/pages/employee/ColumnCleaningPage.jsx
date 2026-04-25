@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { ArrowLeft, CheckCircle2, Sparkles, Zap, AlertTriangle, ArrowRight, Settings2, RefreshCw, FileCheck, Activity, BarChart3, UploadCloud } from 'lucide-react';
+import { ArrowLeft, CheckCircle2, Sparkles, AlertTriangle, RefreshCw, FileCheck, Activity, BarChart3, UploadCloud } from 'lucide-react';
 import EmployeeLayout from '../../layout/EmployeeLayout';
 
 const PIPELINE_STEPS = [
@@ -67,7 +67,6 @@ const ColumnCleaningPage = () => {
   const [cleaning, setCleaning] = useState(false);
   const [cleaningStep, setCleaningStep] = useState(0);
   const [completed, setCompleted] = useState(false);
-  const [beforeAfter, setBeforeAfter] = useState(null);
 
   // Build column configs from the column names passed via URL
   useEffect(() => {
@@ -75,7 +74,6 @@ const ColumnCleaningPage = () => {
       const isNumeric = ['revenue', 'orders', 'retention_score', 'discount', 'profit', 'unit_price', 'cost', 'score', 'quantity', 'age'].includes(name);
       const isDate = name.includes('date');
       const isCategorical = ['segment', 'region', 'channel', 'product', 'status', 'city', 'gender'].includes(name);
-      const isText = ['email', 'name', 'rep_name', 'notes'].includes(name);
 
       let type = 'text';
       let nulls = 0;
@@ -111,7 +109,7 @@ const ColumnCleaningPage = () => {
       return { name, type, nulls, nullPct, strategy, additionalOps, id: i };
     });
     setColumns(configs);
-  }, [colNames.join(',')]);
+  }, [searchParams]);
 
   const updateStrategy = (colName, strategy) => {
     setColumns(prev => prev.map(c => c.name === colName ? { ...c, strategy } : c));

@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { Link, useSearchParams, useNavigate } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import api from "../services/api";
 import "../styles/Auth.css";
 
@@ -40,7 +40,7 @@ const CheckCircleIcon = () => (
 
 export default function ResetPassword() {
     const [searchParams] = useSearchParams();
-    const navigate = useNavigate();
+
     const token = searchParams.get("token");
 
     const [password, setPassword] = useState("");

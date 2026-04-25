@@ -37,12 +37,6 @@ const EyeIcon = ({ off: isOff }) => isOff ? (
     </svg>
 );
 
-const ArrowLeftIcon = () => (
-    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-        <line x1="19" y1="12" x2="5" y2="12" />
-        <polyline points="12 19 5 12 12 5" />
-    </svg>
-);
 
 const AlertIcon = () => (
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -52,13 +46,6 @@ const AlertIcon = () => (
     </svg>
 );
 
-const ChartIcon = () => (
-    <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-        <line x1="18" y1="20" x2="18" y2="10" />
-        <line x1="12" y1="20" x2="12" y2="4" />
-        <line x1="6" y1="20" x2="6" y2="14" />
-    </svg>
-);
 
 const DatabaseIcon = () => (
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -68,12 +55,6 @@ const DatabaseIcon = () => (
     </svg>
 );
 
-const CheckCircleIcon = () => (
-    <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-        <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14" />
-        <polyline points="22 4 12 14.01 9 11.01" />
-    </svg>
-);
 
 export default function EmployeeLogin() {
     const nav = useNavigate();
@@ -82,7 +63,7 @@ export default function EmployeeLogin() {
     const [showPassword, setShowPassword] = useState(false);
     const [error, setError] = useState("");
     const [loading, setLoading] = useState(false);
-    const [infoMessage, setInfoMessage] = useState("");
+    const [infoMessage] = useState("");
 
     const login = async () => {
         if (!email || !password) {

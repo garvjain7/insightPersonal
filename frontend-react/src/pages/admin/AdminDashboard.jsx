@@ -1,11 +1,8 @@
 import { useState, useEffect } from 'react';
 import { Navigate, useNavigate } from 'react-router-dom';
-import { Users, Database, Zap, AlertCircle, TrendingUp, ArrowUpRight, RefreshCw, Loader, BarChart3, Sparkles } from 'lucide-react';
+import { Users, Database, Zap, TrendingUp, ArrowUpRight } from 'lucide-react';
 import AdminLayout from '../../layout/AdminLayout';
 import { getUsers, getDatasets, getUserStats, getQueryVolume, getActivityLogs, getDatasetAssignments } from '../../services/api';
-import AssignUserModal from '../../components/admin/AssignUserModal';
-
-const API_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000/api';
 
 function AnimatedNumber({ value, duration = 1200 }) {
   const [display, setDisplay] = useState('0');
@@ -36,20 +33,12 @@ export default function AdminDashboard() {
   const [activityLogs, setActivityLogs] = useState([]);
   const [stats, setStats] = useState({ total: 0, active: 0, byRole: { admin: 0, employee: 0 } });
   const [loading, setLoading] = useState(true);
-  const [roleFilter, setRoleFilter] = useState('all');
+  const [roleFilter] = useState('all');
   const [queryChartData, setQueryChartData] = useState([10, 10, 10, 10, 10, 10, 10]);
   const [queryDayLabels, setQueryDayLabels] = useState(['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']);
-  const [assignModal, setAssignModal] = useState(null);
-  const [datasetAssignments, setDatasetAssignments] = useState({});
+  const [, setDatasetAssignments] = useState({});
 
   const role = sessionStorage.getItem('role');
-  if (role !== 'admin') return <Navigate to="/datasets" />;
-
-  const getAuthHeaders = () => {
-    const token = sessionStorage.getItem('token');
-    return token ? { Authorization: `Bearer ${token}` } : {};
-  };
-
   useEffect(() => {
     const t = setTimeout(() => setAnimatedBars(true), 400);
     return () => clearTimeout(t);
@@ -89,7 +78,7 @@ export default function AdminDashboard() {
       if (res.success) {
         setDatasetAssignments(prev => ({ ...prev, [dsId]: res.users }));
       }
-    } catch (err) {
+    } catch {
       console.warn(`Failed to fetch assignments for ${dsId}`);
     }
   };
@@ -104,35 +93,9 @@ export default function AdminDashboard() {
 
   useEffect(() => {
     fetchData();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [roleFilter]);
 
-  const handleRoleChange = async (email, newRole) => {
-    setEmployees(prev => prev.map(emp => emp.email === email ? { ...emp, role: newRole } : emp));
-    try {
-      const { updateUserRole } = await import('../../services/api');
-      await updateUserRole(email, newRole);
-      fetchData();
-    } catch (err) {
-      console.error('Failed to update role:', err);
-      fetchData();
-    }
-  };
-
-  const getStatusBadge = (status) => {
-    switch (status) {
-      case 'completed':
-      case 'ready':
-      case 'cleaned':
-        return <span className="admin-badge green">● Cleaned</span>;
-      case 'processing':
-      case 'cleaning':
-        return <span className="admin-badge yellow">● Cleaning</span>;
-      case 'failed':
-        return <span className="admin-badge red">● Failed</span>;
-      default:
-        return <span className="admin-badge gray">○ Not Cleaned</span>;
-    }
-  };
 
   const getDatasetStatus = (ds) => {
     const s = ds.status || ds.upload_status;
@@ -170,6 +133,8 @@ export default function AdminDashboard() {
   const cleanedDatasetsCount = datasets.filter(d => d.status === 'completed' || d.status === 'ready' || d.status === 'cleaned').length;
   const cleaningDatasetsCount = datasets.filter(d => d.status === 'processing' || d.status === 'cleaning').length;
   const notCleanedDatasetsCount = datasets.filter(d => d.status === 'not_cleaned' || !d.status).length;
+
+  if (role !== 'admin') return <Navigate to="/datasets" />;
 
   return (
     <AdminLayout title="Dashboard" subtitle={`Welcome, ${sessionStorage.getItem('userName') || 'Admin'}`}>

@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useNavigate, useLocation, Link } from 'react-router-dom';
-import { Database, Sparkles, LayoutDashboard, MessageSquare, FileText, LogOut, Upload, BarChart3, Activity } from 'lucide-react';
+import { Database, Sparkles, LayoutDashboard, MessageSquare, FileText, LogOut, BarChart3 } from 'lucide-react';
 import { getMe } from '../services/api';
 import '../styles/Employee.css';
 

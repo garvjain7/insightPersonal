@@ -1,15 +1,7 @@
 import { useState, useRef, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { UploadCloud, File, AlertCircle, CheckCircle2, Loader, ArrowRight } from 'lucide-react';
+import { UploadCloud, File, AlertCircle, CheckCircle2, Loader } from 'lucide-react';
 import { uploadDataset, getDatasetStatus } from '../services/api';
-
-const STEPS = [
-  { id: 1, label: 'Uploading' },
-  { id: 2, label: 'Validating' },
-  { id: 3, label: 'Cleaning' },
-  { id: 4, label: 'Analyzing' },
-  { id: 5, label: 'Dashboard' },
-];
 
 const UploadPage = () => {
   const [file, setFile] = useState(null);
@@ -18,7 +10,7 @@ const UploadPage = () => {
   const [isDragActive, setIsDragActive] = useState(false);
   const [datasetId, setDatasetId] = useState(null);
   const [status, setStatus] = useState(null); // 'uploading' | 'processing' | 'completed' | 'failed'
-  const [currentStep, setCurrentStep] = useState(0);
+
   const fileInputRef = useRef(null);
   const navigate = useNavigate();
 
@@ -31,15 +23,14 @@ const UploadPage = () => {
         const res = await getDatasetStatus(datasetId);
         if (res.status === 'completed') {
           setStatus('completed');
-          setCurrentStep(5);
           clearInterval(poll);
         } else if (res.status === 'failed') {
           setStatus('failed');
           setError(res.error || 'Pipeline failed. Check your dataset format.');
           clearInterval(poll);
         } else {
-          // Processing — advance step indicator
-          setCurrentStep(prev => Math.min(prev + 1, 4));
+          // Processing
+
         }
       } catch (err) {
         console.warn('Status poll error:', err.message);
@@ -104,15 +95,6 @@ const UploadPage = () => {
       setError(err.response?.data?.message || err.message || 'An error occurred during upload.');
       setIsUploading(false);
     }
-  };
-
-  const resetUpload = () => {
-    setFile(null);
-    setIsUploading(false);
-    setError('');
-    setDatasetId(null);
-    setStatus(null);
-    setCurrentStep(0);
   };
 
   // Success screen (Toast-like)
