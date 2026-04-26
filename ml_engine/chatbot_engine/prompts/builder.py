@@ -94,21 +94,26 @@ def build(
 def _format_schema(columns: list[ColumnMeta]) -> str:
     """
     Format the relevant columns for the system prompt.
-    Compact but informative — enough for the LLM to reason about the data.
+    Optimized for production: Extremely compact to reduce LLM latency.
     """
     if not columns:
         return "  (no specific columns identified)"
 
     lines = []
     for col in columns:
-        samples = ", ".join(str(v) for v in col.sample_values[:4])
+        # Use only 2 samples max for brevity
+        samples = ", ".join(str(v) for v in col.sample_values[:2])
         line = f"  • {col.name} ({col.inferred_type})"
         if samples:
-            line += f"  —  e.g. {samples}"
-        if col.stats:
-            line += f"  [range: {col.stats['min']} → {col.stats['max']}]"
-        if col.null_pct > 0:
-            line += f"  [{col.null_pct:.1f}% null]"
+            line += f" — e.g. {samples}"
+        
+        # Only include range for numeric to save space
+        if col.stats and col.inferred_type == "numeric":
+            min_val = col.stats.get("min")
+            max_val = col.stats.get("max")
+            if min_val is not None and max_val is not None:
+                line += f" [{min_val}..{max_val}]"
+        
         lines.append(line)
 
     return "\n".join(lines)

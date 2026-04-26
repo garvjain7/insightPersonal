@@ -81,7 +81,16 @@ async def main():
         
         # Build or reuse RAG column index
         if sess.column_index is None:
-            sess.column_index = await ColumnIndex.build(loaded.schema)
+            # We need the physical path to validate cache
+            cleaned_dir = config.UPLOADS_DIR / "cleaned"
+            csv_path = cleaned_dir / f"cleaned_{args['dataset_id']}.csv"
+            
+            sess.column_index = await ColumnIndex.get_or_build(
+                args["dataset_id"], 
+                loaded.schema, 
+                str(config.UPLOADS_DIR),
+                str(csv_path)
+            )
 
         # Classify intent
         intent = await classify(args["question"])

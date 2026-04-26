@@ -19,17 +19,25 @@ from __future__ import annotations
 import logging
 from functools import lru_cache
 from pathlib import Path
-from typing import Any
+from typing import Any, Optional
 
 import duckdb
 import numpy as np
 import pandas as pd
 
+import re
 from config import (
     RAG_MIN_SCORE,
     SAMPLE_VALUES_N,
     STATS_FOR_NUMERIC,
     UPLOADS_DIR,
+)
+from core.persistence import (
+    get_artifact_dir,
+    is_artifact_valid,
+    ArtifactLock,
+    atomic_save_json,
+    load_json
 )
 from models.schemas import ColumnMeta, DatasetInfo
 
@@ -84,27 +92,49 @@ class LoadedDataset:
 def load(dataset_id: str) -> LoadedDataset:
     """
     Load a dataset by dataset_id from /uploads/cleaned/.
-    Looks for cleaned_{dataset_id}.csv
     Returns cached instance if already loaded.
-    Raises FileNotFoundError if the file does not exist.
+    Uses schema caching to speed up repeated loads.
     """
     if dataset_id in _cache:
         logger.debug(f"[{dataset_id}] Returning cached dataset")
         return _cache[dataset_id]
 
-    # Look for cleaned_{dataset_id}.csv in uploads/cleaned/
     cleaned_dir = UPLOADS_DIR / "cleaned"
     actual_filename = f"cleaned_{dataset_id}.csv"
     path = cleaned_dir / actual_filename
     if not path.exists():
-        raise FileNotFoundError(
-            f"Dataset '{dataset_id}' not found in {cleaned_dir.resolve()} "
-            f"(looking for '{actual_filename}')"
-        )
+        raise FileNotFoundError(f"Dataset '{dataset_id}' not found at {path}")
 
-    logger.info(f"[{dataset_id}] Loading from disk...")
+    # Artifact paths
+    art_dir = get_artifact_dir(str(UPLOADS_DIR), dataset_id)
+    schema_path = str(art_dir / "schema_cache.json")
+    lock_path = str(art_dir / "schema.lock")
+
+    schema = None
+    # 1. Try to load cached schema
+    if is_artifact_valid(schema_path, str(path)):
+        cached_data = load_json(schema_path)
+        if cached_data:
+            schema = [ColumnMeta(**c) for c in cached_data]
+            logger.info(f"[{dataset_id}] Loaded schema from cache")
+
+    # 2. Read CSV (Always needed for DuckDB registration)
+    logger.info(f"[{dataset_id}] Loading CSV from disk...")
     df = _read_csv(path)
-    schema = _build_schema(df)
+
+    # 3. Build schema if not loaded from cache
+    if not schema:
+        with ArtifactLock(lock_path):
+            # Double-check after lock
+            if is_artifact_valid(schema_path, str(path)):
+                cached_data = load_json(schema_path)
+                if cached_data: schema = [ColumnMeta(**c) for c in cached_data]
+
+            if not schema:
+                logger.info(f"[{dataset_id}] Inferring schema (cache miss/stale)...")
+                schema = _build_schema(df)
+                atomic_save_json(schema_path, [c.dict() for c in schema])
+
     loaded = LoadedDataset(dataset_id, df, schema)
     _cache[dataset_id] = loaded
     return loaded
@@ -187,7 +217,7 @@ def _build_schema(df: pd.DataFrame) -> list[ColumnMeta]:
         sample_values = series.dropna().unique()[:SAMPLE_VALUES_N].tolist()
 
         # Infer type
-        inferred_type = _infer_type(series)
+        inferred_type = _infer_type(series, col_name)
 
         # Stats for numeric columns
         stats = None
@@ -214,29 +244,31 @@ def _build_schema(df: pd.DataFrame) -> list[ColumnMeta]:
     return schema
 
 
-def _infer_type(series: pd.Series) -> str:
+def _infer_type(series: pd.Series, col_name: str) -> str:
     """
     Infer the semantic type of a column.
-    Used by RAG to match questions to columns.
+    Optimized: only attempts expensive datetime parsing on likely columns.
     """
-    # Try to convert to numeric
+    # 1. Try numeric (fastest/most common)
     numeric_series = pd.to_numeric(series, errors='coerce')
-    if numeric_series.notna().sum() / len(numeric_series) > 0.8:
+    if numeric_series.notna().sum() / (len(numeric_series) + 1e-10) > 0.8:
         return "numeric"
 
-    # Check for datetime
-    try:
-        pd.to_datetime(series, errors='coerce')
-        datetime_count = pd.to_datetime(series, errors='coerce').notna().sum()
-        if datetime_count / len(series) > 0.8:
-            return "datetime"
-    except:
-        pass
+    # 2. Check for datetime ONLY if name suggests it
+    date_patterns = r"(date|time|timestamp|created|updated|dob|year|month|day)"
+    if re.search(date_patterns, col_name.lower()):
+        try:
+            # Using errors='coerce' to avoid hard failures on messy data
+            parsed = pd.to_datetime(series, errors='coerce')
+            if parsed.notna().sum() / (len(series) + 1e-10) > 0.6: # Relaxed threshold for messy dates
+                return "datetime"
+        except:
+            pass
 
-    # Check uniqueness ratio (categorical if low)
-    unique_ratio = series.nunique() / len(series)
+    # 3. Check uniqueness ratio (categorical if low)
+    unique_ratio = series.nunique() / (len(series) + 1e-10)
     if unique_ratio < 0.1:  # Less than 10% unique values
         return "categorical"
 
-    # Default to text
-    return "text"
+    # 4. Default to text
+    return "text"
