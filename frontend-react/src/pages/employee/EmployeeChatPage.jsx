@@ -5,16 +5,23 @@ import { askQuery, getCleanedDatasets, startChatSession, endChatSession, request
 
 import EmployeeLayout from '../../layout/EmployeeLayout';
 
-function RichText({ text }) {
+function RichText({ text, isAi = false }) {
   if (!text) return null;
   const lines = text.split('\n');
   return (
-    <div style={{ lineHeight: 1.6 }}>
+    <div style={{ lineHeight: 1.6, whiteSpace: 'pre-wrap' }}>
       {lines.map((line, i) => {
+        // Handle AI messages that might contain raw HTML/Markdown from the backend
+        if (isAi && (line.includes('<table') || line.includes('<div') || line.includes('<pre'))) {
+           return <div key={i} dangerouslySetInnerHTML={{ __html: line }} />;
+        }
+
         const numbered = line.match(/^\s*(\d+)\.\s+(.*)/);
         if (numbered) return <div key={i} style={{ display: 'flex', gap: '0.5rem', marginBottom: '0.25rem' }}><span style={{ color: 'var(--primary)', fontWeight: 700, minWidth: '1.4rem' }}>{numbered[1]}.</span><span dangerouslySetInnerHTML={{ __html: inlineMd(numbered[2]) }} /></div>;
+        
         const bullet = line.match(/^\s*[•-]\s+(.*)/);
         if (bullet) return <div key={i} style={{ display: 'flex', gap: '0.5rem', marginBottom: '0.25rem' }}><span style={{ color: 'var(--accent)', marginTop: 2 }}>•</span><span dangerouslySetInnerHTML={{ __html: inlineMd(bullet[1]) }} /></div>;
+
         if (!line.trim()) return <div key={i} style={{ height: '0.5rem' }} />;
         return <div key={i} style={{ marginBottom: '0.1rem' }} dangerouslySetInnerHTML={{ __html: inlineMd(line) }} />;
       })}
@@ -278,11 +285,6 @@ const EmployeeChatPage = () => {
       if (dsId) {
         const response = await askQuery(dsId, msg);
         let answer = response?.answer || "I'm sorry, I couldn't compute an answer for that.";
-        const answerAlreadyHasSuggestions = /good follow-up questions|try asking next/i.test(answer);
-        const suggested = Array.isArray(response?.suggested_questions) && response.suggested_questions.length > 0 && !answerAlreadyHasSuggestions
-          ? `\n\n**Try asking next:**\n${response.suggested_questions.slice(0, 5).map(q => `• ${q}`).join('\n')}`
-          : '';
-        
         // Check for image-related errors
         if (answer.toLowerCase().includes("cannot read image") || 
             answer.toLowerCase().includes("does not support image") ||
@@ -291,7 +293,14 @@ const EmployeeChatPage = () => {
         }
         
         const bid = msgId.current++;
-        setMessages(prev => [...prev, { id: bid, role: 'ai', content: buildResponseHTML({ text: `${answer}${suggested}`, require_permission: response?.require_permission }), time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) }]);
+        setMessages(prev => [...prev, { 
+          id: bid, 
+          role: 'ai', 
+          content: answer, 
+          suggested: response?.suggested_questions,
+          require_permission: response?.require_permission,
+          time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) 
+        }]);
       } else {
         // Fallback to mock response
         const r = getResponse(msg);
@@ -320,8 +329,6 @@ const EmployeeChatPage = () => {
     setMessages([{ id: 0, role: 'ai', content: 'Chat cleared. Ask a new question about your dataset.', time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) }]);
     msgId.current = 1;
   };
-
-  const colTypeColors = { numeric: { border: 'rgba(63,185,80,0.2)', color: 'var(--success)', label: 'NUM' }, categorical: { border: 'rgba(188,140,255,0.2)', color: 'var(--accent)', label: 'CAT' }, date: { border: 'rgba(210,153,34,0.2)', color: 'var(--warning)', label: 'DATE' } };
 
   // Derive live columns from fetched dataset info
   const liveColumns = datasetInfo?.headers?.map(h => ({
@@ -366,110 +373,100 @@ const EmployeeChatPage = () => {
         </div>
       </div>
 
-      <div className="emp-content" style={{ display: 'flex', height: 'calc(100vh - 180px)', gap: 16, margin: 0, padding: 0, overflow: 'hidden' }}>
+      <div style={{ display: 'flex', flex: 1, overflow: 'hidden' }}>
         {/* Context Panel */}
-        <div style={{ 
-          width: 260, background: 'rgba(22,27,34,0.4)', borderRight: '1px solid var(--border-color)', 
-          display: 'flex', flexDirection: 'column', flexShrink: 0, overflow: 'hidden', 
-          borderRadius: '12px 0 0 12px', border: '1px solid var(--border-color)' 
-        }}>
-          <div style={{ padding: '16px 16px 12px', borderBottom: '1px solid var(--border-color)' }}>
+        <div className="chat-context-panel">
+          <div style={{ padding: '16px 16px 12px', borderBottom: '1px solid rgba(48,54,61,0.6)' }}>
             <div style={{ fontSize: 13, fontWeight: 600, color: '#fff', marginBottom: 2 }}>Dataset Context</div>
-            <div style={{ fontFamily: "'DM Mono', monospace", fontSize: 9, color: 'var(--text-muted)' }}>Metadata & Quick Stats</div>
+            <div style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 9, color: 'var(--text-muted)' }}>Active for this session</div>
           </div>
-          <div style={{ flex: 1, overflowY: 'auto', padding: 14 }}>
+          <div className="chat-context-panel-body">
             {/* Dataset Info — Live from API */}
-            <div style={{ background: 'rgba(13,17,23,0.95)', borderRadius: 10, padding: '12px 14px', marginBottom: 14 }}>
-              <div style={{ fontSize: 13, fontWeight: 600, color: '#fff', marginBottom: 4, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+            <div className="chat-ds-meta-card">
+              <div className="chat-ds-meta-name">
                 {selectedDataset?.name || 'No dataset selected'}
               </div>
-              <div style={{ fontFamily: "'DM Mono', monospace", fontSize: 9, color: 'var(--text-muted)', lineHeight: 1.8 }}>
+              <div className="chat-ds-meta-info">
                 {datasetInfo ? (
                   <>
-                    <span style={{ color: 'var(--primary)' }}>{datasetInfo.totalRows.toLocaleString()}</span> rows ·{' '}
-                    <span style={{ color: 'var(--primary)' }}>{datasetInfo.headers.length}</span> cols<br />
+                    <span>{datasetInfo.totalRows.toLocaleString()}</span> rows · <span>{datasetInfo.headers.length}</span> cols<br />
                     Status: <span style={{ color: 'var(--success)' }}>Cleaned ✓</span>
                   </>
                 ) : (
-                  <span style={{ color: 'var(--text-muted)' }}>{selectedDataset ? 'Loading...' : 'Select a dataset'}</span>
+                  <span>{selectedDataset ? 'Loading...' : 'Select a dataset'}</span>
                 )}
               </div>
             </div>
 
             {/* Columns — Live from dataset */}
-            <div style={{ fontFamily: "'DM Mono', monospace", fontSize: 9, color: 'var(--text-muted)', letterSpacing: 1.5, textTransform: 'uppercase', marginBottom: 8 }}>Columns</div>
-            <div style={{ fontFamily: "'DM Mono', monospace", fontSize: 8, color: 'var(--text-muted)', marginBottom: 6 }}>Click to reference in query</div>
+            <div className="chat-panel-section-label">Columns</div>
+            <div style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 8, color: 'var(--text-muted)', marginBottom: 6 }}>Click to reference in query</div>
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5, marginBottom: 6 }}>
               {liveColumns.length > 0 ? liveColumns.map(col => {
-                const tc = colTypeColors[col.type] || colTypeColors['categorical'];
                 const isSelected = selectedCols.includes(col.name);
+                const typeClass = col.type === 'numeric' ? 'num' : col.type === 'date' || col.type === 'datetime' ? 'date' : 'cat';
                 return (
                   <span
                     key={col.name}
                     onClick={() => toggleCol(col.name)}
-                    style={{
-                      fontFamily: "'DM Mono', monospace", fontSize: 9, padding: '3px 8px', borderRadius: 5,
-                      cursor: 'pointer', transition: 'all 0.15s',
-                      border: `1px solid ${isSelected ? 'var(--primary)' : tc.border}`,
-                      background: isSelected ? 'rgba(88,166,255,0.08)' : 'rgba(255,255,255,0.04)',
-                      color: isSelected ? 'var(--primary)' : tc.color,
-                    }}
+                    className={`chat-col-pill ${typeClass} ${isSelected ? 'selected' : ''}`}
                   >
                     {col.name}
                   </span>
                 );
               }) : (
-                <span style={{ fontFamily: "'DM Mono', monospace", fontSize: 9, color: 'var(--text-muted)', fontStyle: 'italic' }}>
+                <span style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 9, color: 'var(--text-muted)', fontStyle: 'italic' }}>
                   {selectedDataset ? 'Loading columns...' : 'No dataset selected'}
                 </span>
               )}
             </div>
-            <div style={{ fontFamily: "'DM Mono', monospace", fontSize: 8, color: 'var(--text-muted)', marginTop: 4 }}>
-              <span style={{ color: 'var(--success)' }}>■</span> numeric &nbsp;
-              <span style={{ color: 'var(--accent)' }}>■</span> categorical &nbsp;
-              <span style={{ color: 'var(--warning)' }}>■</span> date
+            <div className="chat-col-legend">
+              <span><span style={{ color: '#3fb950' }}>■</span> numeric</span>
+              <span><span style={{ color: '#bc8cff' }}>■</span> categorical</span>
+              <span><span style={{ color: '#d29922' }}>■</span> date</span>
             </div>
 
             {/* Suggested Questions */}
-            <div style={{ fontFamily: "'DM Mono', monospace", fontSize: 9, color: 'var(--text-muted)', letterSpacing: 1.5, textTransform: 'uppercase', marginBottom: 8, marginTop: 16 }}>Suggested Questions</div>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
+            <div className="chat-panel-section-label" style={{ marginTop: 16 }}>Suggested Questions</div>
+            <div style={{ display: 'flex', flexDirection: 'column' }}>
               {smartSuggestions.map((s, i) => (
-                <div
-                  key={i}
-                  onClick={() => handleSend(s.q)}
-                  style={{
-                    padding: '8px 11px', borderRadius: 8, fontSize: 11.5, color: 'var(--text-main)',
-                    border: '1px solid var(--border-color)', background: 'rgba(13,17,23,0.95)',
-                    cursor: 'pointer', transition: 'all 0.15s', lineHeight: 1.4,
-                  }}
-                  onMouseEnter={e => { e.currentTarget.style.borderColor = 'var(--primary)'; e.currentTarget.style.background = 'rgba(88,166,255,0.08)'; }}
-                  onMouseLeave={e => { e.currentTarget.style.borderColor = 'var(--border-color)'; e.currentTarget.style.background = 'rgba(13,17,23,0.95)'; }}
-                >
-                  <span style={{ fontSize: 11, marginRight: 5 }}>{s.icon}</span>{s.q}
+                <div key={i} className="chat-preq" onClick={() => handleSend(s.q)}>
+                  <span style={{ marginRight: 5 }}>{s.icon}</span>{s.q}
                 </div>
               ))}
             </div>
 
             {/* Query History */}
-            <div style={{ fontFamily: "'DM Mono', monospace", fontSize: 9, color: 'var(--text-muted)', letterSpacing: 1.5, textTransform: 'uppercase', marginBottom: 8, marginTop: 16 }}>Query History</div>
-            <div style={{ fontFamily: "'DM Mono', monospace", fontSize: 9, color: 'var(--text-muted)', lineHeight: 2 }}>
-              {queryHistory.map((q, i) => (
-                <div key={i} style={{ cursor: 'pointer', color: 'var(--text-main)' }} onClick={() => handleSend(q)}>→ {q}</div>
-              ))}
-            </div>
+            {queryHistory.length > 0 && (
+              <>
+                <div style={{ height: 1, background: 'rgba(48,54,61,0.6)', margin: '14px 0 10px' }} />
+                <div className="chat-panel-section-label">Query History</div>
+                <div>
+                  {queryHistory.map((q, i) => (
+                    <div key={i} className="chat-history-item" onClick={() => handleSend(q)} title={q}>
+                      <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>{q}</span>
+                    </div>
+                  ))}
+                </div>
+              </>
+            )}
           </div>
         </div>
 
         {/* Chat Main */}
         <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
           {/* Chat Header Area */}
-          <div style={{
-            padding: '12px 20px', background: 'rgba(13,17,23,0.4)',
-            borderBottom: '1px solid var(--border-color)', display: 'flex', alignItems: 'center', gap: 12, flexShrink: 0,
-          }}>
+          <div className="chat-area-header">
             <div style={{ flex: 1 }}>
-              <div style={{ fontSize: 13, fontWeight: 600, color: '#fff' }}>{selectedDataset?.name || 'No Dataset Selected'}</div>
-              <div style={{ fontFamily: "'DM Mono', monospace", fontSize: 9, color: 'var(--text-muted)', marginTop: 2 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <div style={{ fontSize: 13, fontWeight: 600, color: '#fff' }}>{selectedDataset?.name || 'No Dataset Selected'}</div>
+                {selectedDataset && (
+                  <span className={`emp-status-pill ${datasetInfo ? 'ready' : 'processing'}`}>
+                    {datasetInfo ? 'Ready' : 'Loading'}
+                  </span>
+                )}
+              </div>
+              <div style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 9, color: 'var(--text-muted)', marginTop: 2 }}>
                 {datasetInfo ? `${datasetInfo.totalRows.toLocaleString()} rows · ${datasetInfo.headers.length} columns` : 'Select a dataset to begin chat'}
               </div>
             </div>
@@ -517,7 +514,49 @@ const EmployeeChatPage = () => {
                       textAlign: isUser ? 'right' : 'left',
                       boxShadow: '0 2px 8px rgba(0,0,0,0.2)',
                     }}>
-                      {isUser ? <p style={{ margin: 0 }}>{msg.content}</p> : <RichText text={msg.content} />}
+                      {isUser ? (
+                        <p style={{ margin: 0 }}>{msg.content}</p>
+                      ) : (
+                        <div>
+                          <RichText text={msg.content} isAi={true} />
+                          
+                          {msg.require_permission && (
+                            <div style={{
+                              marginTop: 12, padding: 12,
+                              background: 'rgba(210,153,34,0.1)',
+                              border: '1px solid rgba(210,153,34,0.4)',
+                              borderRadius: 8, textAlign: 'center'
+                            }}>
+                              <div style={{ fontSize: 13, color: 'var(--amber)', marginBottom: 10 }}>
+                                This response contains insights that require additional permissions.
+                              </div>
+                              <button
+                                className="emp-btn emp-btn-primary emp-btn-sm"
+                                onClick={() => navigate('/employee/datasets')}
+                              >
+                                Request Permission
+                              </button>
+                            </div>
+                          )}
+
+                          {msg.suggested && msg.suggested.length > 0 && (
+                            <div style={{ marginTop: 12 }}>
+                              <div style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 8, color: 'var(--text-muted)', marginBottom: 6, letterSpacing: 1, textTransform: 'uppercase' }}>Follow-up suggestions</div>
+                              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                                {msg.suggested.map((q, idx) => (
+                                  <button
+                                    key={idx}
+                                    className="chat-followup-pill"
+                                    onClick={() => handleSend(q)}
+                                  >
+                                    → {q}
+                                  </button>
+                                ))}
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      )}
                     </div>
                     )}
                     {!isImageError && <div style={{ fontFamily: "'DM Mono', monospace", fontSize: 9, color: 'var(--text-muted)', marginTop: 4, padding: '0 2px', textAlign: isUser ? 'right' : 'left' }}>{msg.time}</div>}
@@ -530,7 +569,12 @@ const EmployeeChatPage = () => {
           </div>
 
           {/* Input Bar */}
-          <div style={{ padding: '14px 16px', borderTop: '1px solid var(--border-color)', background: 'rgba(13,17,23,0.95)', flexShrink: 0 }}>
+          <div style={{ 
+            padding: '14px 20px', 
+            borderTop: '1px solid var(--border-color)', 
+            background: 'rgba(13,17,23,0.95)', 
+            flexShrink: 0
+          }}>
             <div style={{
               display: 'flex', gap: 10, alignItems: 'flex-end',
               background: 'rgba(22,27,34,0.8)', border: '1px solid var(--border-color)',

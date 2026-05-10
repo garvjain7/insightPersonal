@@ -6,9 +6,12 @@ import { getAnalysis, getCleanedData, getDatasets } from '../../services/api';
 
 const TOC_SECTIONS = [
   { id: 'overview', label: 'Overview' },
+  { id: 'cleaning', label: 'Cleaning Summary' },
   { id: 'schema', label: 'Schema / Columns' },
+  { id: 'nulls', label: 'Null Analysis' },
   { id: 'numeric', label: 'Numeric Stats' },
   { id: 'categorical', label: 'Categorical Profiles' },
+  { id: 'insights', label: 'Quick Insights' },
   { id: 'actions', label: 'Actions' },
 ];
 
@@ -39,6 +42,7 @@ const EmployeeSummaryPage = () => {
   const [summaryData, setSummaryData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [summaryError, setSummaryError] = useState('');
+  const [schemaExpanded, setSchemaExpanded] = useState(false);
 
   useEffect(() => {
     const loadDatasets = async () => {
@@ -228,10 +232,10 @@ const EmployeeSummaryPage = () => {
     .slice(0, 3);
 
   const cleaningCards = summaryData ? [
-    { val: (summaryData.totalNulls ?? 0).toLocaleString(), lbl: 'Nulls Found', color: 'var(--warning)' },
-    { val: (summaryData.duplicateRows ?? 0).toLocaleString(), lbl: 'Duplicate Rows', color: 'var(--accent)' },
-    { val: summaryData.qualityScore ?? 'N/A', lbl: 'Quality Score', color: 'var(--success)' },
-    { val: summaryData.cleaningReport?.length || 0, lbl: 'Cleaning Steps', color: 'var(--primary)' },
+    { val: (summaryData.totalNulls ?? 0).toLocaleString(), lbl: 'Nulls Found', color: '#d29922', accent: 'rgba(210,153,34,0.6)' },
+    { val: (summaryData.duplicateRows ?? 0).toLocaleString(), lbl: 'Duplicate Rows', color: '#58a6ff', accent: 'rgba(88,166,255,0.6)' },
+    { val: summaryData.qualityScore ?? 'N/A', lbl: 'Quality Score', color: '#3fb950', accent: 'rgba(63,185,80,0.6)' },
+    { val: summaryData.cleaningReport?.length || 0, lbl: 'Cleaning Steps', color: '#bc8cff', accent: 'rgba(188,140,255,0.6)' },
   ] : [];
 
   const cleaningSteps = summaryData?.cleaningReport?.length
@@ -243,6 +247,43 @@ const EmployeeSummaryPage = () => {
         skipped: !item.count,
       }))
     : [];
+
+  // Build quick insights from analysis columns
+  const quickInsights = [];
+  if (summaryData?.analysisColumns) {
+    // High null rate warnings
+    summaryData.analysisColumns
+      .filter(col => parseFloat(col.null_pct) > 5)
+      .slice(0, 3)
+      .forEach(col => quickInsights.push({
+        type: 'warning',
+        icon: '⚠️',
+        title: `High null rate in “${col.name}”`,
+        desc: `${parseFloat(col.null_pct).toFixed(1)}% of values are missing. Consider filling or dropping this column.`,
+      }));
+    // Constant columns
+    summaryData.analysisColumns
+      .filter(col => col.nunique === 1)
+      .slice(0, 2)
+      .forEach(col => quickInsights.push({
+        type: 'info',
+        icon: 'ℹ️',
+        title: `Constant column detected: “${col.name}”`,
+        desc: `This column has only one unique value and may not be useful for analysis.`,
+      }));
+    // Dominant category insight
+    const catCols = summaryData.analysisColumns.filter(col => normalizeType(col.inferred_type || col.type) === 'categorical');
+    if (catCols.length > 0) {
+      const col = catCols[0];
+      const topVal = summaryData.columnStats?.[col.name]?.topValues?.[0];
+      if (topVal) quickInsights.push({
+        type: 'success',
+        icon: '📊',
+        title: `Dominant value in “${col.name}”`,
+        desc: `“${topVal.value}” accounts for ${typeof topVal.pct === 'number' ? Math.round(topVal.pct) : '?'}% of all records (${typeof topVal.count === 'number' ? topVal.count.toLocaleString() : ''} rows).`,
+      });
+    }
+  }
 
   const currentDataset = selectedDataset || {
     name: datasetName,
@@ -470,11 +511,18 @@ const EmployeeSummaryPage = () => {
             </div>
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 10, marginBottom: 16 }}>
               {cleaningCards.map((card, index) => (
-                <div key={index} className="glass-panel" style={{ padding: 14, textAlign: 'center' }}>
-                  <div style={{ fontSize: 20, fontWeight: 600, color: card.color }}>{card.val}</div>
-                  <div style={{ fontFamily: "'DM Mono', monospace", fontSize: 9, color: 'var(--text-muted)', marginTop: 3, textTransform: 'uppercase' }}>
-                    {card.lbl}
-                  </div>
+                <div
+                  key={index}
+                  style={{
+                    background: 'linear-gradient(135deg, rgba(22,27,34,0.9) 0%, rgba(22,27,34,0.7) 100%)',
+                    border: '1px solid rgba(48,54,61,0.8)',
+                    borderRadius: 12, padding: 14, textAlign: 'center',
+                    position: 'relative', overflow: 'hidden',
+                  }}
+                >
+                  <div style={{ fontSize: 26, fontWeight: 700, color: card.color, lineHeight: 1, marginBottom: 4 }}>{card.val}</div>
+                  <div style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 9, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: 0.5 }}>{card.lbl}</div>
+                  <div style={{ position: 'absolute', bottom: 0, left: 0, right: 0, height: 2, background: card.accent, opacity: 0.7 }} />
                 </div>
               ))}
             </div>
@@ -493,25 +541,19 @@ const EmployeeSummaryPage = () => {
                 >
                   <div
                     style={{
-                      width: 22,
-                      height: 22,
-                      borderRadius: '50%',
-                      background: step.skipped ? 'rgba(255,255,255,0.04)' : 'rgba(63,185,80,0.08)',
-                      color: step.skipped ? 'var(--text-muted)' : 'var(--success)',
-                      fontFamily: "'DM Mono', monospace",
-                      fontSize: 10,
-                      fontWeight: 600,
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      flexShrink: 0,
+                      width: 22, height: 22, borderRadius: '50%',
+                      background: step.skipped ? 'rgba(255,255,255,0.04)' : 'rgba(63,185,80,0.12)',
+                      color: step.skipped ? 'var(--text-muted)' : '#3fb950',
+                      fontFamily: "'JetBrains Mono', monospace", fontSize: 10, fontWeight: 700,
+                      display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0,
+                      border: `1px solid ${step.skipped ? 'rgba(255,255,255,0.06)' : 'rgba(63,185,80,0.3)'}`,
                     }}
                   >
-                    {step.num}
+                    {step.skipped ? step.num : '✓'}
                   </div>
-                  <div style={{ flex: 1, fontSize: 13, fontWeight: 500, color: step.skipped ? 'var(--text-muted)' : '#fff' }}>{step.name}</div>
-                  <div style={{ fontFamily: "'DM Mono', monospace", fontSize: 10, color: 'var(--text-muted)' }}>{step.detail}</div>
-                  <div style={{ fontFamily: "'DM Mono', monospace", fontSize: 10, color: step.skipped ? 'var(--text-muted)' : 'var(--success)' }}>{step.result}</div>
+                  <div style={{ flex: 1, fontSize: 13, fontWeight: 600, color: step.skipped ? 'var(--text-muted)' : '#fff' }}>{step.name}</div>
+                  <div style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 10, color: 'var(--text-muted)', maxWidth: 220, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{step.detail}</div>
+                  <div style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 10, color: step.skipped ? 'var(--text-muted)' : '#3fb950', flexShrink: 0 }}>{step.result}</div>
                 </div>
               )) : (
                 <div style={{ padding: 16, color: 'var(--text-muted)', fontSize: 12 }}>
@@ -527,19 +569,15 @@ const EmployeeSummaryPage = () => {
               <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
                 <thead>
                   <tr>
-                    {['#', 'Column Name', 'Type', 'Nullable', 'Unique Values'].map((col) => (
+                    {['#', 'Column Name', 'Type', 'Nullable', 'Unique Values', 'Sample'].map((col) => (
                       <th
                         key={col}
                         style={{
                           background: 'rgba(13,17,23,0.95)',
-                          padding: '9px 12px',
-                          textAlign: 'left',
-                          fontFamily: "'DM Mono', monospace",
-                          fontSize: 9,
-                          color: 'var(--text-muted)',
-                          letterSpacing: 1,
-                          textTransform: 'uppercase',
-                          borderBottom: '1px solid var(--border-color)',
+                          padding: '9px 12px', textAlign: 'left',
+                          fontFamily: "'JetBrains Mono', monospace",
+                          fontSize: 9, color: 'var(--text-muted)', letterSpacing: 1,
+                          textTransform: 'uppercase', borderBottom: '1px solid var(--border-color)',
                         }}
                       >
                         {col}
@@ -548,45 +586,47 @@ const EmployeeSummaryPage = () => {
                   </tr>
                 </thead>
                 <tbody>
-                  {schema.slice(0, 15).map((col, index) => (
+                  {(schemaExpanded ? schema : schema.slice(0, 15)).map((col, index) => (
                     <tr
                       key={index}
                       onMouseEnter={(e) => { e.currentTarget.style.background = 'rgba(22,27,34,0.7)'; }}
                       onMouseLeave={(e) => { e.currentTarget.style.background = ''; }}
                       style={{ transition: 'background 0.15s' }}
                     >
-                      <td style={{ padding: '10px 12px', borderBottom: '1px solid rgba(255,255,255,0.025)', color: 'var(--text-muted)', fontFamily: "'DM Mono', monospace", fontSize: 10 }}>
-                        {index + 1}
+                      <td style={{ padding: '10px 12px', borderBottom: '1px solid rgba(255,255,255,0.025)', color: 'var(--text-muted)', fontFamily: "'JetBrains Mono', monospace", fontSize: 10 }}>{index + 1}</td>
+                      <td style={{ padding: '10px 12px', borderBottom: '1px solid rgba(255,255,255,0.025)' }}>
+                        <code style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 11, color: 'var(--primary)' }}>{col.name}</code>
                       </td>
                       <td style={{ padding: '10px 12px', borderBottom: '1px solid rgba(255,255,255,0.025)' }}>
-                        <code style={{ fontFamily: "'DM Mono', monospace", fontSize: 11, color: 'var(--primary)' }}>{col.name}</code>
-                      </td>
-                      <td style={{ padding: '10px 12px', borderBottom: '1px solid rgba(255,255,255,0.025)' }}>
-                        <span
-                          style={{
-                            fontFamily: "'DM Mono', monospace",
-                            fontSize: 9,
-                            padding: '2px 8px',
-                            borderRadius: 5,
-                            background: typeColors[col.typeClass]?.bg,
-                            color: typeColors[col.typeClass]?.color,
-                          }}
-                        >
+                        <span style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 9, padding: '2px 8px', borderRadius: 5, background: typeColors[col.typeClass]?.bg, color: typeColors[col.typeClass]?.color }}>
                           {summaryData?.columnTypes?.[col.name] || col.type}
                         </span>
                       </td>
-                      <td style={{ padding: '10px 12px', borderBottom: '1px solid rgba(255,255,255,0.025)', color: col.nullable === 'Yes' ? 'var(--warning)' : 'var(--success)', fontSize: 11 }}>
-                        {col.nullable}
-                      </td>
-                      <td style={{ padding: '10px 12px', borderBottom: '1px solid rgba(255,255,255,0.025)', fontFamily: "'DM Mono', monospace", fontSize: 10, color: 'var(--text-main)' }}>
-                        {col.unique}
+                      <td style={{ padding: '10px 12px', borderBottom: '1px solid rgba(255,255,255,0.025)', color: col.nullable === 'Yes' ? 'var(--warning)' : 'var(--success)', fontSize: 11 }}>{col.nullable}</td>
+                      <td style={{ padding: '10px 12px', borderBottom: '1px solid rgba(255,255,255,0.025)', fontFamily: "'JetBrains Mono', monospace", fontSize: 10, color: 'var(--text-main)' }}>{col.unique}</td>
+                      <td style={{ padding: '10px 12px', borderBottom: '1px solid rgba(255,255,255,0.025)', fontFamily: "'JetBrains Mono', monospace", fontSize: 9, color: 'var(--text-muted)' }}>
+                        {(() => {
+                          const src = analysisColumnMap[col.name];
+                          const samples = src?.sample_values || src?.top_values?.slice(0, 2).map(v => v.value);
+                          return samples?.length > 0 ? samples.slice(0, 2).join(', ') : '—';
+                        })()}
                       </td>
                     </tr>
                   ))}
                   {schema.length > 15 && (
                     <tr>
-                      <td colSpan={5} style={{ padding: '10px 12px', fontFamily: "'DM Mono', monospace", fontSize: 10, color: 'var(--text-muted)', textAlign: 'center' }}>
-                        + {schema.length - 15} more columns
+                      <td colSpan={6} style={{ padding: '10px 12px', fontFamily: "'JetBrains Mono', monospace", fontSize: 10, color: 'var(--text-muted)', textAlign: 'center' }}>
+                        {schemaExpanded ? (
+                          <>
+                            Showing all {schema.length} columns ·{' '}
+                            <span style={{ color: 'var(--primary)', cursor: 'pointer' }} onClick={() => setSchemaExpanded(false)}>Collapse ↑</span>
+                          </>
+                        ) : (
+                          <>
+                            + {schema.length - 15} more columns ·{' '}
+                            <span style={{ color: 'var(--primary)', cursor: 'pointer' }} onClick={() => setSchemaExpanded(true)}>Show all ↓</span>
+                          </>
+                        )}
                       </td>
                     </tr>
                   )}
@@ -664,6 +704,23 @@ const EmployeeSummaryPage = () => {
                 )}
               </div>
             ))}
+          </div>
+
+          <div id="insights" style={{ marginBottom: 32, scrollMarginTop: 80 }}>
+            <div style={sectionTitleStyle}>⚡ Quick Data Insights</div>
+            {quickInsights.length > 0 ? quickInsights.map((insight, i) => (
+              <div key={i} className={`summary-insight-card ${insight.type}`}>
+                <div className="summary-insight-icon">{insight.icon}</div>
+                <div>
+                  <div className="summary-insight-title">{insight.title}</div>
+                  <div className="summary-insight-desc">{insight.desc}</div>
+                </div>
+              </div>
+            )) : (
+              <div className="glass-panel" style={{ padding: '14px 18px', color: 'var(--text-muted)', fontSize: 12 }}>
+                No data quality insights detected — your dataset looks healthy.
+              </div>
+            )}
           </div>
 
           <div id="actions" style={{ marginBottom: 32, scrollMarginTop: 80 }}>

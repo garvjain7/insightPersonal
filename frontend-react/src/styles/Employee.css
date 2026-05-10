@@ -10,9 +10,10 @@
 
 .emp-layout {
     display: flex;
-    min-height: 100vh;
+    height: 100vh;
     background: #0d1117;
     position: relative;
+    overflow: hidden;
 }
 
 .emp-layout::before {
@@ -197,35 +198,41 @@
 .emp-main {
     margin-left: 260px;
     flex: 1;
-    padding: 2rem;
-    overflow: auto;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
     position: relative;
     z-index: 1;
 }
 
-/* ─────────────────────────────────────────────────────────────
-   Topbar
-   ───────────────────────────────────────────────────────────── */
-
 .emp-topbar {
+    flex-shrink: 0;
     display: flex;
     align-items: center;
     justify-content: space-between;
-    margin-bottom: 2rem;
-    padding-bottom: 1.5rem;
+    padding: 1.5rem 2rem;
     border-bottom: 1px solid rgba(48, 54, 61, 0.4);
     animation: fadeSlideDown 0.4s cubic-bezier(0.16, 1, 0.3, 1);
+    background: rgba(13, 17, 23, 0.4);
+    backdrop-filter: blur(8px);
 }
 
+.emp-content {
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+    padding: 1.5rem 2rem;
+    animation: contentFadeIn 0.5s cubic-bezier(0.16, 1, 0.3, 1);
+}
 @keyframes fadeSlideDown {
-    0% {
-        opacity: 0;
-        transform: translateY(-10px);
-    }
-    100% {
-        opacity: 1;
-        transform: translateY(0);
-    }
+    0% { opacity: 0; transform: translateY(-10px); }
+    100% { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes adminFadeUp {
+    0% { opacity: 0; transform: translateY(20px); }
+    100% { opacity: 1; transform: translateY(0); }
 }
 
 .emp-topbar-title {
@@ -288,9 +295,6 @@
 }
 
 /* Content area */
-.emp-content {
-    animation: contentFadeIn 0.5s cubic-bezier(0.16, 1, 0.3, 1);
-}
 
 @keyframes contentFadeIn {
     0% {
@@ -1314,7 +1318,7 @@
     }
     
     .emp-main {
-        padding: 1rem;
+        padding: 0;
     }
     
     .emp-topbar {
@@ -1378,4 +1382,566 @@
 .emp-demo-toggle .emp-btn {
     font-family: 'JetBrains Mono', monospace;
     font-size: 0.65rem;
+}
+
+/* ═════════════════════════════════════════════════════════════
+   UI Enhancement Additions — Enterprise SaaS Polish
+   ═════════════════════════════════════════════════════════════ */
+
+/* ─────────────────────────────────────────────────────────────
+   Flush Content Layout (for Chatbot, Cleaning — edge-to-edge)
+   ───────────────────────────────────────────────────────────── */
+
+.emp-content-flush {
+    flex: 1;
+    min-height: 0;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+    padding: 0;
+    margin: 0;
+}
+
+/* ─────────────────────────────────────────────────────────────
+   Status Pills
+   ───────────────────────────────────────────────────────────── */
+
+.emp-status-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.6rem;
+    font-weight: 600;
+    padding: 0.2rem 0.6rem;
+    border-radius: 20px;
+    letter-spacing: 0.5px;
+    text-transform: uppercase;
+    flex-shrink: 0;
+}
+
+.emp-status-pill::before {
+    content: '';
+    width: 5px;
+    height: 5px;
+    border-radius: 50%;
+    background: currentColor;
+    flex-shrink: 0;
+}
+
+.emp-status-pill.ready {
+    background: rgba(63, 185, 80, 0.1);
+    color: #3fb950;
+    border: 1px solid rgba(63, 185, 80, 0.2);
+}
+
+.emp-status-pill.processing {
+    background: rgba(210, 153, 34, 0.1);
+    color: #d29922;
+    border: 1px solid rgba(210, 153, 34, 0.2);
+    animation: statusPulse 1.5s ease-in-out infinite;
+}
+
+.emp-status-pill.committed {
+    background: rgba(88, 166, 255, 0.1);
+    color: #58a6ff;
+    border: 1px solid rgba(88, 166, 255, 0.2);
+}
+
+.emp-status-pill.error {
+    background: rgba(248, 81, 73, 0.1);
+    color: #f85149;
+    border: 1px solid rgba(248, 81, 73, 0.2);
+}
+
+@keyframes statusPulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.6; }
+}
+
+/* ─────────────────────────────────────────────────────────────
+   Insight Callout Block
+   ───────────────────────────────────────────────────────────── */
+
+.emp-insight-callout {
+    padding: 10px 14px;
+    background: rgba(88, 166, 255, 0.06);
+    border-left: 3px solid #58a6ff;
+    border-radius: 0 8px 8px 0;
+    font-size: 0.8rem;
+    line-height: 1.6;
+    color: rgba(201, 209, 217, 0.9);
+    margin-top: 8px;
+}
+
+.emp-insight-callout.warning {
+    background: rgba(210, 153, 34, 0.06);
+    border-left-color: #d29922;
+}
+
+.emp-insight-callout.success {
+    background: rgba(63, 185, 80, 0.06);
+    border-left-color: #3fb950;
+}
+
+.emp-insight-callout strong {
+    color: #58a6ff;
+}
+
+.emp-insight-callout.warning strong {
+    color: #d29922;
+}
+
+.emp-insight-callout.success strong {
+    color: #3fb950;
+}
+
+/* ─────────────────────────────────────────────────────────────
+   Mono Label (for data display labels)
+   ───────────────────────────────────────────────────────────── */
+
+.emp-mono-label {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.6rem;
+    color: rgba(139, 148, 158, 0.7);
+    text-transform: uppercase;
+    letter-spacing: 1.5px;
+}
+
+/* ─────────────────────────────────────────────────────────────
+   Enhanced KPI Card (with top accent strip)
+   ───────────────────────────────────────────────────────────── */
+
+.emp-kpi-card {
+    background: linear-gradient(135deg, rgba(22, 27, 34, 0.9) 0%, rgba(22, 27, 34, 0.7) 100%);
+    border: 1px solid rgba(48, 54, 61, 0.8);
+    border-radius: 12px;
+    padding: 14px 16px;
+    position: relative;
+    overflow: hidden;
+    text-align: center;
+    transition: border-color 0.2s;
+}
+
+.emp-kpi-card::after {
+    content: '';
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    height: 2px;
+    background: var(--emp-kpi-accent, #58a6ff);
+    opacity: 0.6;
+}
+
+.emp-kpi-card:hover {
+    border-color: rgba(88, 166, 255, 0.25);
+}
+
+.emp-kpi-value {
+    font-size: 1.75rem;
+    font-weight: 700;
+    color: var(--emp-kpi-accent, #fff);
+    line-height: 1;
+    margin-bottom: 4px;
+}
+
+.emp-kpi-label {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.6rem;
+    color: rgba(139, 148, 158, 0.7);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+/* ─────────────────────────────────────────────────────────────
+   Chatbot-specific Styles
+   ───────────────────────────────────────────────────────────── */
+
+/* Context panel left side */
+.chat-context-panel {
+    width: 280px;
+    background: rgba(13, 17, 23, 0.6);
+    border-right: 1px solid rgba(48, 54, 61, 0.6);
+    display: flex;
+    flex-direction: column;
+    flex-shrink: 0;
+    overflow: hidden;
+}
+
+.chat-context-panel-body {
+    flex: 1;
+    overflow-y: auto;
+    padding: 14px;
+}
+
+.chat-context-panel-body::-webkit-scrollbar { width: 3px; }
+.chat-context-panel-body::-webkit-scrollbar-thumb { background: rgba(48, 54, 61, 0.8); border-radius: 2px; }
+
+/* Dataset meta card inside context panel */
+.chat-ds-meta-card {
+    background: rgba(22, 27, 34, 0.9);
+    border: 1px solid rgba(48, 54, 61, 0.8);
+    border-radius: 10px;
+    padding: 12px 14px;
+    margin-bottom: 14px;
+}
+
+.chat-ds-meta-name {
+    font-size: 0.8rem;
+    font-weight: 600;
+    color: #fff;
+    margin-bottom: 4px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.chat-ds-meta-info {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.6rem;
+    color: rgba(139, 148, 158, 0.7);
+    line-height: 1.9;
+}
+
+.chat-ds-meta-info span {
+    color: #58a6ff;
+}
+
+/* Section label inside context panel */
+.chat-panel-section-label {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.55rem;
+    color: rgba(139, 148, 158, 0.6);
+    letter-spacing: 1.5px;
+    text-transform: uppercase;
+    margin-bottom: 7px;
+    margin-top: 14px;
+}
+
+/* Column type pills */
+.chat-col-pill {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.55rem;
+    padding: 3px 8px;
+    border-radius: 5px;
+    cursor: pointer;
+    border: 1px solid rgba(48, 54, 61, 0.8);
+    background: rgba(255, 255, 255, 0.03);
+    color: rgba(139, 148, 158, 0.8);
+    transition: all 0.15s;
+    user-select: none;
+}
+
+.chat-col-pill:hover {
+    border-color: #58a6ff;
+    color: #58a6ff;
+    background: rgba(88, 166, 255, 0.06);
+}
+
+.chat-col-pill.selected {
+    background: rgba(88, 166, 255, 0.1);
+    border-color: #58a6ff;
+    color: #58a6ff;
+}
+
+.chat-col-pill.num {
+    border-color: rgba(63, 185, 80, 0.25);
+    color: #3fb950;
+}
+
+.chat-col-pill.num:hover, .chat-col-pill.num.selected {
+    background: rgba(63, 185, 80, 0.08);
+    border-color: #3fb950;
+}
+
+.chat-col-pill.cat {
+    border-color: rgba(188, 140, 255, 0.25);
+    color: #bc8cff;
+}
+
+.chat-col-pill.cat:hover, .chat-col-pill.cat.selected {
+    background: rgba(188, 140, 255, 0.08);
+    border-color: #bc8cff;
+}
+
+.chat-col-pill.date {
+    border-color: rgba(210, 153, 34, 0.25);
+    color: #d29922;
+}
+
+.chat-col-pill.date:hover, .chat-col-pill.date.selected {
+    background: rgba(210, 153, 34, 0.08);
+    border-color: #d29922;
+}
+
+/* Column legend */
+.chat-col-legend {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.55rem;
+    color: rgba(139, 148, 158, 0.5);
+    margin-top: 5px;
+    display: flex;
+    gap: 10px;
+}
+
+/* Suggested question items */
+.chat-preq {
+    padding: 8px 11px;
+    border-radius: 8px;
+    font-size: 0.7rem;
+    color: rgba(201, 209, 217, 0.8);
+    border: 1px solid rgba(48, 54, 61, 0.8);
+    background: rgba(13, 17, 23, 0.7);
+    cursor: pointer;
+    transition: all 0.15s;
+    line-height: 1.4;
+    margin-bottom: 4px;
+}
+
+.chat-preq:hover {
+    border-color: #58a6ff;
+    color: #fff;
+    background: rgba(88, 166, 255, 0.06);
+}
+
+/* Query history items */
+.chat-history-item {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.6rem;
+    color: rgba(139, 148, 158, 0.7);
+    cursor: pointer;
+    padding: 4px 6px;
+    border-radius: 5px;
+    transition: all 0.15s;
+    display: flex;
+    align-items: baseline;
+    gap: 6px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    margin-bottom: 2px;
+}
+
+.chat-history-item:hover {
+    color: #c9d1d9;
+    background: rgba(255, 255, 255, 0.04);
+}
+
+.chat-history-item::before {
+    content: '→';
+    color: #58a6ff;
+    font-size: 0.65rem;
+    flex-shrink: 0;
+}
+
+/* Chat main area header */
+.chat-area-header {
+    padding: 12px 20px;
+    background: rgba(13, 17, 23, 0.5);
+    border-bottom: 1px solid rgba(48, 54, 61, 0.6);
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    flex-shrink: 0;
+    backdrop-filter: blur(8px);
+}
+
+/* Suggested follow-up pill buttons */
+.chat-followup-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    padding: 4px 12px;
+    border-radius: 20px;
+    font-size: 0.7rem;
+    font-family: 'JetBrains Mono', monospace;
+    border: 1px solid rgba(88, 166, 255, 0.25);
+    background: rgba(88, 166, 255, 0.05);
+    color: #58a6ff;
+    cursor: pointer;
+    transition: all 0.15s;
+    white-space: nowrap;
+}
+
+.chat-followup-pill:hover {
+    background: rgba(88, 166, 255, 0.12);
+    border-color: rgba(88, 166, 255, 0.5);
+    transform: translateY(-1px);
+}
+
+/* Running indicator (amber spinner bar) */
+.chat-running-indicator {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 14px;
+    background: rgba(210, 153, 34, 0.06);
+    border: 1px solid rgba(210, 153, 34, 0.2);
+    border-radius: 8px;
+    margin-bottom: 12px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.6rem;
+    color: #d29922;
+}
+
+.chat-spinner {
+    width: 14px;
+    height: 14px;
+    border: 2px solid rgba(210, 153, 34, 0.2);
+    border-top-color: #d29922;
+    border-radius: 50%;
+    animation: chatSpin 0.8s linear infinite;
+    flex-shrink: 0;
+}
+
+@keyframes chatSpin {
+    to { transform: rotate(360deg); }
+}
+
+/* ─────────────────────────────────────────────────────────────
+   Cleaning Page Enhancements
+   ───────────────────────────────────────────────────────────── */
+
+/* Running indicator for cleaning steps */
+.clean-running-indicator {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 14px;
+    background: rgba(210, 153, 34, 0.06);
+    border: 1px solid rgba(210, 153, 34, 0.15);
+    border-radius: 10px;
+    margin-bottom: 12px;
+}
+
+.clean-running-text {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 0.6rem;
+    color: #f8b94b;
+    line-height: 1.4;
+}
+
+/* Step status chips in right panel */
+.clean-step-status-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 0.55rem;
+    padding: 2px 8px;
+    border-radius: 10px;
+    margin-top: 5px;
+}
+
+.clean-step-status-chip.previewing {
+    background: rgba(248, 185, 75, 0.1);
+    color: #f8b94b;
+    border: 1px solid rgba(248, 185, 75, 0.2);
+}
+
+.clean-step-status-chip.committed {
+    background: rgba(45, 212, 160, 0.08);
+    color: #2dd4a0;
+    border: 1px solid rgba(45, 212, 160, 0.2);
+}
+
+.clean-step-status-chip.ready {
+    background: rgba(139, 150, 184, 0.08);
+    color: #8896b8;
+    border: 1px solid rgba(139, 150, 184, 0.15);
+}
+
+/* Progress bar for null quality */
+.clean-quality-bar-wrap {
+    height: 4px;
+    background: rgba(255, 255, 255, 0.06);
+    border-radius: 4px;
+    overflow: hidden;
+    margin-top: 8px;
+    margin-bottom: 4px;
+}
+
+.clean-quality-bar {
+    height: 100%;
+    border-radius: 4px;
+    background: linear-gradient(90deg, #2dd4a0, #58a6ff);
+    transition: width 0.8s ease;
+}
+
+/* ─────────────────────────────────────────────────────────────
+   Summary Page Enhancements
+   ───────────────────────────────────────────────────────────── */
+
+/* Quick Insights cards */
+.summary-insight-card {
+    display: flex;
+    align-items: flex-start;
+    gap: 12px;
+    padding: 12px 16px;
+    background: rgba(22, 27, 34, 0.7);
+    border: 1px solid rgba(48, 54, 61, 0.8);
+    border-radius: 10px;
+    margin-bottom: 8px;
+    transition: border-color 0.2s;
+}
+
+.summary-insight-card:hover {
+    border-color: rgba(88, 166, 255, 0.2);
+}
+
+.summary-insight-card.warning {
+    border-left: 3px solid #d29922;
+}
+
+.summary-insight-card.info {
+    border-left: 3px solid #58a6ff;
+}
+
+.summary-insight-card.success {
+    border-left: 3px solid #3fb950;
+}
+
+.summary-insight-icon {
+    font-size: 1rem;
+    flex-shrink: 0;
+    margin-top: 1px;
+}
+
+.summary-insight-title {
+    font-size: 0.8rem;
+    font-weight: 600;
+    color: #fff;
+    margin-bottom: 2px;
+}
+
+.summary-insight-desc {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.65rem;
+    color: rgba(139, 148, 158, 0.8);
+    line-height: 1.5;
+}
+
+/* Quality score inline bar */
+.summary-quality-bar {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-top: 2px;
+}
+
+.summary-quality-bar-track {
+    flex: 1;
+    height: 4px;
+    background: rgba(255, 255, 255, 0.06);
+    border-radius: 4px;
+    overflow: hidden;
+    max-width: 80px;
+}
+
+.summary-quality-bar-fill {
+    height: 100%;
+    border-radius: 4px;
+    background: linear-gradient(90deg, #1f6feb, #3fb950);
+    transition: width 1s ease;
 }

@@ -646,16 +646,41 @@ const EmployeeCleaningPage = () => {
           <div className="clean-rpanel-head">
             <div className="clean-rpanel-title">Step {currentStep} — {STEPS[currentStep-1].name}</div>
             <div className="clean-rpanel-sub">Configure how you&apos;d like to clean this dataset</div>
+            {(() => {
+              const stepKey = STEPS[currentStep - 1]?.statusKey;
+              const stepStatus = cleaningState?.steps?.[stepKey];
+              if (loading) return <div className="clean-step-status-chip previewing"><span style={{width:8,height:8,borderRadius:'50%',background:'var(--amber)',display:'inline-block',animation:'cleanBlink 0.8s infinite'}} /> Processing…</div>;
+              if (stepStatus === 'committed') return <div className="clean-step-status-chip committed">✓ Committed</div>;
+              if (stepStatus === 'previewed') return <div className="clean-step-status-chip previewing">Previewing</div>;
+              return <div className="clean-step-status-chip ready">● Ready</div>;
+            })()}
           </div>
           <div className="clean-rpanel-body">
             
             {/* Step 1 */}
             {currentStep === 1 && (
               <div>
+                {loading && (
+                  <div className="clean-running-indicator">
+                    <div className="feat-spinner" style={{borderTopColor:'var(--amber)',borderColor:'rgba(248,185,75,0.2)'}} />
+                    <div className="clean-running-text">Scanning null values…</div>
+                  </div>
+                )}
                 <div className="clean-stat-row">
                   <div className="clean-stat-mini"><div className="clean-stat-mini-val" style={{color:'var(--red)'}}>{totNulls}</div><div className="clean-stat-mini-lbl">Nulls Found</div></div>
                   <div className="clean-stat-mini"><div className="clean-stat-mini-val">{nullCols.length}</div><div className="clean-stat-mini-lbl">Cols Affected</div></div>
                 </div>
+                {(rawStats.totalRows || 0) > 0 && (
+                  <div style={{marginBottom:12}}>
+                    <div style={{display:'flex',justifyContent:'space-between',fontFamily:"'IBM Plex Mono',monospace",fontSize:9,color:'var(--ink3)',marginBottom:4}}>
+                      <span>Data completeness</span>
+                      <span style={{color:totNulls===0?'var(--green)':'var(--amber)'}}>{(((rawStats.totalRows||0)*(tableHeaders.length||1) - totNulls)/((rawStats.totalRows||1)*(tableHeaders.length||1))*100).toFixed(1)}%</span>
+                    </div>
+                    <div className="clean-quality-bar-wrap">
+                      <div className="clean-quality-bar" style={{width:`${(((rawStats.totalRows||0)*(tableHeaders.length||1) - totNulls)/((rawStats.totalRows||1)*(tableHeaders.length||1))*100).toFixed(1)}%`}} />
+                    </div>
+                  </div>
+                )}
                 <div className="clean-step-card">
                   <div className="clean-step-card-title">Column Strategies</div>
                   {nullCols.length === 0 ? (
@@ -681,6 +706,7 @@ const EmployeeCleaningPage = () => {
                 <div className="clean-stat-row">
                   <div className="clean-stat-mini"><div className="clean-stat-mini-val" style={{color:'var(--amber)'}}>{totDupes}</div><div className="clean-stat-mini-lbl">Dupes Found</div></div>
                   <div className="clean-stat-mini"><div className="clean-stat-mini-val">{((rawStats.totalRows || tableRows.length) - totDupes).toLocaleString()}</div><div className="clean-stat-mini-lbl">Unique Rows</div></div>
+                  <div className="clean-stat-mini"><div className="clean-stat-mini-val" style={{color:'var(--accent2)'}}>{rawStats.totalRows > 0 ? (totDupes / rawStats.totalRows * 100).toFixed(1) + '%' : '0%'}</div><div className="clean-stat-mini-lbl">Dupe Rate</div></div>
                 </div>
                 <div className="clean-step-card">
                   <div className="clean-step-card-title">Duplicate Strategy</div>
@@ -705,9 +731,13 @@ const EmployeeCleaningPage = () => {
                 <div className="clean-step-card">
                   <div className="clean-step-card-title">Type Adjustments</div>
                   {showHeaders.map(col => {
+                    const inferredType = rawStats?.columnTypes?.[col] || 'auto';
                     return (
                       <div className="clean-col-row" key={col}>
-                        <div><div className="clean-col-name">{col}</div></div>
+                        <div>
+                          <div className="clean-col-name">{col}</div>
+                          <div style={{fontFamily:"'IBM Plex Mono',monospace", fontSize:9, color:'var(--ink3)', marginTop:1}}>detected: {inferredType}</div>
+                        </div>
                         <select className="clean-strategy-sel" value={settings[3][col] || 'Auto-detect'} onChange={e => setSettings({...settings, 3: {...settings[3], [col]: e.target.value}})}>
                           {TYPE_STRATEGIES.map(s => <option key={s}>{s}</option>)}
                         </select>
@@ -743,14 +773,14 @@ const EmployeeCleaningPage = () => {
             {currentStep === 5 && (
               <div>
                 {featStreaming && (
-                  <div className="feat-loading">
-                    <div className="feat-loading-top">
-                      <div className="feat-spinner"></div>
+                  <div className="clean-running-indicator" style={{background:'rgba(167,139,250,0.06)',borderColor:'rgba(167,139,250,0.2)'}}>
+                    <div className="feat-spinner" />
+                    <div>
                       <div style={{fontFamily:"'IBM Plex Mono',monospace", fontSize:10, color:'var(--purple)'}}>Ollama analyzing dataset schema…</div>
-                    </div>
-                    <div className="feat-stream">
-                      {featStreamText.split('\n').map((line, i) => <div key={i}>{line}</div>)}
-                      <span className="clean-cursor-blink"></span>
+                      <div className="feat-stream" style={{marginTop:6}}>
+                        {featStreamText.split('\n').map((line, i) => <div key={i}>{line}</div>)}
+                        <span className="clean-cursor-blink" />
+                      </div>
                     </div>
                   </div>
                 )}
