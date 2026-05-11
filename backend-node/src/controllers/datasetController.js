@@ -125,6 +125,7 @@ const CLEANER_SCRIPT = path.resolve(
   "..",
   "ml_engine",
   "pipeline",
+  "core",
   "cleaner.py"
 );
 const TRANSFORMER_SCRIPT = path.resolve(
@@ -132,6 +133,7 @@ const TRANSFORMER_SCRIPT = path.resolve(
   "..",
   "ml_engine",
   "pipeline",
+  "core",
   "transformer.py"
 );
 const PIPELINE_SCRIPT = path.resolve(

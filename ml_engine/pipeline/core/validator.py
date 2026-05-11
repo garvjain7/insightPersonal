@@ -16,11 +16,12 @@ MAX_COLS = 200
 
 
 def setup_dataset_versioning(
-    base_dir="ml_engine", user_id="default_user", dataset_id=None
+    base_dir="ml_engine", user_id="default_user", dataset_id=None, dataset_dir=None
 ):
     """
     Creates a new dataset version folder and initializes system.log if needed.
     Multi-tenant isolation: data/users/<user_id>/<dataset_id>
+    If dataset_dir is provided, that directory is used directly (no sub-path computed).
     """
     user_dir = os.path.join(base_dir, "data", "users", user_id)
     logs_dir = os.path.join(base_dir, "logs")
@@ -41,14 +42,18 @@ def setup_dataset_versioning(
     # Use provided dataset_id or generate isolated dataset ID
     if not dataset_id:
         dataset_id = f"dataset_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:6]}"
-    dataset_dir = os.path.join(user_dir, dataset_id)
+
+    # Honour explicit dataset_dir override (supplied by run_pipeline.py)
+    if dataset_dir is None:
+        dataset_dir = os.path.join(user_dir, dataset_id)
     os.makedirs(dataset_dir, exist_ok=True)
 
     return dataset_id, dataset_dir, logger
 
 
 def validate_dataset(
-    file_path, base_dir="ml_engine", user_id="default_user", dataset_id=None
+    file_path, base_dir="ml_engine", user_id="default_user", dataset_id=None,
+    dataset_dir=None
 ):
     """
     Validates the dataset size and initial data quality to fail fast if necessary.
@@ -56,7 +61,7 @@ def validate_dataset(
     """
     start_time = datetime.datetime.now()
     dataset_id, dataset_dir, logger = setup_dataset_versioning(
-        base_dir, user_id, dataset_id
+        base_dir, user_id, dataset_id, dataset_dir=dataset_dir
     )
 
     logger.info(

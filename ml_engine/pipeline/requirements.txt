@@ -1,0 +1,27 @@
+# requirements.txt for ml_engine/pipeline/
+# ==========================================
+# Install with: pip install -r requirements.txt
+
+# Core data processing
+pandas>=1.3.0
+numpy>=1.20.0
+
+# ML / modeling
+scikit-learn>=1.0.0
+xgboost>=1.5.0
+joblib>=1.0.0
+
+# Time-series forecasting (pipeline/ml/forecaster.py)
+statsmodels>=0.13.0
+
+# Schema matching
+rapidfuzz>=2.0.0
+
+# File locking (concurrent pipeline runs)
+filelock>=3.0.0
+
+# Dashboard / visualization artifact generation
+plotly>=5.0.0
+
+# Env vars
+python-dotenv>=0.19.0

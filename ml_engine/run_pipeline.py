@@ -56,15 +56,15 @@ def _mask_pii(text: str) -> str:
 
 def _import_stages():
     try:
-        from pipeline.validator import validate_dataset
-        from pipeline.schema_manager import process_schema
-        from pipeline.feature_engineer import engineer_features
-        from pipeline.trainer import train_evaluate_models
-        from pipeline.forecaster import generate_forecast
-        from pipeline.bi_engine import run_bi_engine
-        from pipeline.metric_engine import generate_metric_definitions
-        from pipeline.insight_engine import generate_insights
-        from pipeline.dashboard import generate_dashboard_config
+        from pipeline.core.validator import validate_dataset
+        from pipeline.core.schema_manager import process_schema
+        from pipeline.ml.feature_engineer import engineer_features
+        from pipeline.ml.trainer import train_evaluate_models
+        from pipeline.ml.forecaster import generate_forecast
+        from pipeline.analytics.bi_engine import run_bi_engine
+        from pipeline.analytics.metric_engine import generate_metric_definitions
+        from pipeline.analytics.insight_engine import generate_insights
+        from pipeline.infra.dashboard import generate_dashboard_config
     except ImportError as exc:
         logger.error(f"Failed to import pipeline stage: {exc}")
         raise

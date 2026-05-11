@@ -21,10 +21,10 @@ from rapidfuzz import process, fuzz
 from filelock import FileLock
 
 try:
-    from pipeline.ollama_client import schema_interpret as _ollama_schema
+    from pipeline.infra.ollama_client import schema_interpret as _ollama_schema
 except ImportError:
     try:
-        from ollama_client import schema_interpret as _ollama_schema
+        from infra.ollama_client import schema_interpret as _ollama_schema
     except ImportError:
         _ollama_schema = None
 
