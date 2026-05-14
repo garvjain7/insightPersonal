@@ -380,8 +380,8 @@ const DatasetsPage = () => {
                     <div className="glass-panel" style={{ padding: '4rem', textAlign: 'center' }}>
                         <Database size={48} color="var(--text-muted)" style={{ marginBottom: '1.5rem' }} />
                         <h3>No datasets found</h3>
-                        <p style={{ color: 'var(--text-muted)', marginBottom: '2rem' }}>Upload your first dataset to start generating insights.</p>
-                        {isAdmin && <button className="btn-primary" onClick={() => navigate('/admin/upload')}>Upload Dataset</button>}
+                        <p style={{ color: 'var(--text-muted)', marginBottom: '2rem' }}>Add your first dataset to start generating insights.</p>
+                        {isAdmin && <button className="btn-primary" onClick={() => navigate('/admin/upload')}>Add data</button>}
                     </div>
                 ) : (
                     isAdmin ? renderAdminContent() : renderEmployeeContent()

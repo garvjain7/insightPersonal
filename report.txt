@@ -1,0 +1,457 @@
+Connector Platform × DataInsights.ai — Senior Platform Integration Analysis
+0. Reality check: what each system actually is
+DataInsights.ai is a full-stack analytics product:
+
+Upload CSV/Excel → PostgreSQL dataset registry → Python cleaning wizard → cleaned_{id}.csv → run_pipeline.py artifacts → DuckDB NL→SQL chat + Recharts dashboard.
+State machine: not_cleaned → cleaning → cleaned → artifacts.
+Multi-tenant: company_id on every row, JWT-authed, RBAC permissions table.
+Data lives at: uploads/raw/, uploads/temp/{id}/, uploads/cleaned/, uploads/artifacts/.
+Connector Platform is a standalone ingestion wizard:
+
+10 connectors (CSV, Excel, JSON/REST, PostgreSQL, MySQL, Google Sheets, Airtable, Notion, HubSpot, Google Analytics 4).
+FastAPI + Uvicorn backend on port 8000.
+Separate React/Vite/Zustand frontend on port 5173.
+Own filesystem: connectors/backend/uploads/raw/ and connectors/backend/uploads/normalized/.
+No auth, no multi-tenancy, no PostgreSQL dataset registry, no company_id.
+Terminal state: user sees PreviewPage — the journey ends there. No downstream pipeline.
+1. Architecture Compatibility
+1.1 Connector lifecycle vs current upload lifecycle
+Dimension	Connector Platform	DataInsights.ai upload
+Entry point
+POST /api/ingest/fetch (FastAPI, port 8000)
+POST /api/upload (Express, port 5000)
+Dataset ID generation
+connector_source_YYYYMMDD_HHMM (string, not UUID)
+crypto.randomUUID() (UUID v4)
+DB record creation
+None
+INSERT INTO datasets with company_id, user_id
+File storage
+connectors/backend/uploads/raw/*.csv
+uploads/raw/{uuid}_{filename}
+Normalized output
+connectors/backend/uploads/normalized/*.json
+Not produced (raw CSV goes direct to cleaner)
+Auth/user attribution
+None
+JWT token → req.user → company_id, user_id
+State tracking
+In-memory Zustand only
+PostgreSQL upload_status column
+Max rows
+Hard capped at 10,000
+No cap (100 MB limit)
+Post-ingestion action
+Preview page (terminal)
+Cleaning wizard → pipeline → dashboard
+Core mismatch: The connector platform produces a local JSON artifact and stops. DataInsights.ai requires a PostgreSQL record with UUID, a raw CSV in a specific path, and a multi-tenant ownership chain. These are two completely different output contracts.
+
+1.2 Dataset ID collision risk
+Connector IDs like csv_default_20260511_0246 are not UUIDs and will break every downstream query in DataInsights.ai that joins datasets.dataset_id as UUID type in PostgreSQL. This is a type mismatch, not just a naming convention issue.
+
+1.3 Multi-tenant implications
+The connector platform has zero tenant awareness. Every route in ingest.py and datasets.py is publicly accessible with no auth header, no company_id injection, no user attribution. Wiring this directly into a multi-tenant product without redesign would:
+
+Allow any user to trigger ingestion for any tenant
+Create datasets with no company_id (triggers the upload fallback bug already identified)
+Make the permission table incomplete (no row to grant access to)
+1.4 Filesystem assumptions
+Both systems assume local disk as the storage backend. The connector writes to connectors/backend/uploads/. DataInsights.ai writes to uploads/ at the monorepo root. These paths do not overlap today, but both will break on any cloud-native deployment (container restart wipes disk, shared-nothing horizontal scale, Vercel etc.).
+
+2. Data Flow Integration Analysis
+The target integrated flow should be:
+
+connector.fetch()
+  → raw DataFrame
+  → save_raw CSV to uploads/raw/{uuid}_{name}
+  → INSERT INTO datasets (uuid, company_id, user_id, …)
+  → [optional: normalizer.normalize() → schema preview]
+  → cleaning wizard (existing)
+  → run_pipeline.py
+  → artifacts + dashboard_config
+  → AI querying
+2.1 What format should cross the connector → DataInsights.ai boundary
+The answer is: canonical raw CSV at uploads/raw/.
+
+The connector's normalizer.normalize() output (JSON with typed columns, 10k-row cap) is designed for the connector platform's preview UI. It is not what DataInsights.ai's cleaning pipeline expects. The cleaning pipeline (transformer.py, cleaner.py) expects a raw CSV with original dtypes and uncapped rows. Passing a 10k-row-capped, JSON-typed normalized dataset into the cleaning pipeline would:
+
+Silently discard rows beyond 10k (unacceptable for analytics)
+Cause dtype double-conversion (already-typed JSON → re-parsed CSV loses fidelity)
+Break the raw stats baseline in schema_json (which tracks original row count for quality scoring)
+Therefore: The connector's fetch() → save_raw() path is the correct integration point. The normalizer should be used only for preview/UI display, not as a data-plane serialization format.
+
+2.2 DataFrame ownership
+The DataFrame exists in two places in the connector platform:
+
+In the HTTP request handler (ingest.py) — in-process, in memory
+Written to disk as raw/*.csv then immediately freed
+DataInsights.ai's chatbot engine loads the cleaned CSV into a per-process in-memory DuckDB via the chatbot_runner subprocess. There is no shared DataFrame between the connector fetch and the ML query path — they are properly separated by the filesystem boundary (CSV). This is correct and should be preserved.
+
+2.3 CSV snapshots are still required
+Yes, unconditionally. The entire DataInsights.ai pipeline — cleaning wizard, transformer, ML pipeline, chatbot, preview, download — assumes a local CSV as the canonical data representation. Normalized JSON is only useful for the connector preview UI.
+
+2.4 Should connectors directly create datasets
+Yes, but through the existing Node.js API, not by bypassing it. The connector backend should, after a successful fetch, call POST /api/upload (internally or via HTTP) or emit a job that the Node.js uploadController processes. This keeps dataset ownership, company_id, and RBAC fully intact.
+
+3. Tech Stack Differences
+3.1 FastAPI vs Express
+Concern	FastAPI (connector)	Express (DataInsights.ai)
+Runtime
+Uvicorn/asyncio
+Node.js event loop
+Concurrency model
+Native async coroutines
+Async via Promises
+Auth
+None
+JWT via protect middleware
+Schema validation
+Pydantic v2 models
+Manual (no validation library)
+File upload
+UploadFile (streaming-capable)
+Multer (to disk)
+Deployment
+Separate Python process / container
+Node process
+These are two separate services by nature. They do not share a runtime and cannot be "merged" into one process without rewriting one side.
+
+Key operational fact: FastAPI uses Python's asyncio but connector.fetch() (pandas, psycopg2, requests) is synchronous and blocking. Under load, multiple concurrent fetch() calls will block uvicorn worker threads exactly as the Node.js runPython spawn problem does. Neither runtime is inherently safe here without a job queue.
+
+3.2 Frontend integration
+The connector frontend is a separate Vite app with its own node_modules, its own Zustand store, its own Axios client pointing at localhost:8000. It has no knowledge of DataInsights.ai's auth token, company context, or React Router structure.
+
+Integration into the main frontend (frontend-react) requires:
+
+Merging Zustand ingestion state into the existing session-storage–based auth context
+Injecting Authorization: Bearer <token> into all connector API calls
+Replacing localhost:8000 API base with VITE_API_BASE_URL (or a connector-specific env var)
+Adding connector routes into the main App.jsx router
+The UI components (ConnectorCard, CredentialForm, SourceSelector, DataTable, ConnectorIcon, SetupGuide) are self-contained and directly reusable with minor prop additions for auth.
+
+3.3 Python orchestration overlap
+Both systems use Python for data processing. Overlapping concerns:
+
+Concern	Connector platform	DataInsights.ai ml_engine
+CSV reading
+pd.read_csv()
+pd.read_csv() (cleaner/transformer)
+Type inference
+_infer_dtype() in normalizer
+_build_schema() in chatbot dataset.py
+DataFrame serialization
+df.to_csv() → JSON
+df.to_csv() (cleaning), DuckDB registration
+Column metadata
+ColumnMeta(name, dtype, nullable)
+ColumnMeta(name, dtype, inferred_type, null_pct, nunique, sample_values, stats)
+The connector's ColumnMeta is a simplified subset of the chatbot's ColumnMeta. They are not compatible. The connector schema cannot be fed to the RAG engine without re-enrichment.
+
+3.4 Dependency conflicts
+The connector backend has its own requirements.txt with pandas, FastAPI, psycopg2-binary, pymysql, gspread, google-auth, requests, pydantic. The ml_engine has its own requirements. There are likely pandas version divergences. Running both in the same Python virtualenv is risky. They should remain in separate virtual environments or containers.
+
+4. Connector Abstraction Quality
+What is good
+BaseConnector ABC with validate() / fetch() is a clean, well-designed abstraction. The contract is minimal and correct.
+REGISTRY dict in manager.py: adding a new connector is literally one file + one line. Excellent extensibility.
+CONNECTOR_CATALOG drives the frontend gallery without any hardcoding in React. Separation is correct.
+normalizer.normalize() as a single exit point for all connectors produces consistent column metadata.
+Credentials cleared from Zustand after fetch — good security hygiene.
+What is missing / dangerous for production
+No per-connector row limits before fetch() — PostgreSQL connector does SELECT * FROM schema.table. A 50M-row table will load entirely into memory as a pandas DataFrame before truncation. Memory bomb. Fix: inject LIMIT in database connectors or use chunksize/streaming.
+
+SELECT * FROM "{safe_source}" in PostgreSQL connector — safe_source is built by replacing . with ".". If source contains "; DROP TABLE users; -- (user-controlled input from the sources list), this is injectable. Same issue in MySQL SELECT * FROM \{source}`. **These sources come from the server's own validate()` response** so today they are safe, but this pattern should use parameterized identifiers.
+
+No timeout on connector.fetch() — requests calls have 15s timeout, DB connections have connect_timeout=10, but the full pd.read_sql() has no statement timeout. A slow query can block a uvicorn worker indefinitely.
+
+Credentials passed as plain dict[str, Any] — no validation of required fields, no type checking before use. If config["host"] is missing, you get a Python KeyError unhandled at the source. The Pydantic models exist in models.py but are not used to validate connector configs — only API request/response shapes.
+
+FILE_CONNECTORS = {"csv", "excel", "google_sheets", "google_analytics"} in ingest.py is a hardcoded set not derived from the registry. Adding a new file-based connector requires updating this set and the registry — a two-place change, contradicting the "one line" promise in the extensibility guide.
+
+No auth on any connector endpoint — complete absence of authentication/authorization.
+
+_build_dataset_id generates non-unique IDs — two imports of the same connector within the same minute produce the same dataset_id, silently overwriting files on disk.
+
+5. Integration Strategy Options
+Option A — Monolith: fold connector backend Python into ml_engine
+Merge connectors/backend into ml_engine/connectors/. Node.js calls connector scripts via spawn() just as it calls the existing pipeline scripts.
+
+Pros
+Single Python environment; no extra service; simple deploy
+Cons
+Breaks FastAPI async model; connector fetch blocks Node worker thread same as pipeline; no isolation between connector crashes and ML engine; adds all connector deps (psycopg2, pymysql, gspread, etc.) to ml_engine venv
+Migration complexity
+Medium — need IPC protocol redesign, no HTTP, just CLI args
+Scalability
+Poor — synchronous subprocess per fetch, no parallelism
+Operational burden
+Low (one less service) but hidden complexity
+Verdict: Viable for MVP only. Do not use for production.
+
+Option B — Internal module: FastAPI runs as a sidecar, Node.js proxies to it
+Keep FastAPI running (uvicorn on internal port 8001), Node.js backend proxies /api/connectors/* and /api/ingest/* to it, adding auth headers and company context before proxying.
+
+Pros
+Reuses FastAPI as-is; frontend talks only to Node.js (single origin); auth added at proxy layer
+Cons
+Node.js becomes a proxy adding latency; two Python processes (uvicorn + any ml_engine subprocess); connector platform still has no company_id → Node.js must inject it in a non-trivial way; filesystem must be shared between FastAPI container and Node.js container
+Migration complexity
+Medium — needs auth proxy middleware in Node.js, connector output must feed uploadController
+Scalability
+Medium — uvicorn can be scaled independently but shared filesystem remains a bottleneck
+Operational burden
+Medium (2 services to manage)
+Verdict: Good stepping stone for Phase 1 migration, but the shared filesystem is the blocker.
+
+Option C — Separate microservice: connector platform as independent service with webhook/event callback
+Connector platform is deployed independently (Render/Railway/Fly.io), auth added via API key or JWT passthrough, and on successful fetch() it calls back to DataInsights.ai main API (POST /api/internal/connector-ingested) with dataset metadata + signed S3/GCS URL for the raw file.
+
+Pros
+Clean boundary; connector service can scale independently; no filesystem coupling; auth and tenant context live entirely in DataInsights.ai; connector failures do not affect main platform
+Cons
+Requires object storage (S3/GCS) as the shared data plane; higher operational complexity; needs inter-service auth (API keys / mTLS); 2x network round-trip per ingestion
+Migration complexity
+High — storage layer must change from local disk to object storage for both systems
+Scalability
+Best — fully independent scaling
+Operational burden
+High (3 services: main backend, connector service, object storage)
+Verdict: The correct long-term architecture for enterprise SaaS. Premature for current stage.
+
+Option D — Ingestion Gateway: thin Node.js adapter layer in front of connector backend
+Add a new Express router (connectorRoutes.js) in the main backend that:
+
+Validates JWT + company_id
+Calls the Python FastAPI connector service internally (HTTP)
+On success: generates a uuid, writes the raw CSV to uploads/raw/ (or object store), inserts dataset record in PostgreSQL with correct company_id, then responds with the normal datasetId
+Frontend hits main API only — no CORS issue, single origin, single auth model
+Pros
+Frontend integration is trivial (same API base, same auth); connector platform stays isolated; dataset lifecycle fully owned by DataInsights.ai; incremental migration
+Cons
+Filesystem must be shared between Node.js and FastAPI (or object store); Node.js adds a network hop; connector service still needs internal auth (even if localhost)
+Migration complexity
+Low-to-Medium — mostly additive changes to Node.js backend
+Scalability
+Good — connector service can be extracted to dedicated worker later
+Operational burden
+Medium
+Verdict: The best practical option for current stage.
+
+Option E — Async worker approach: connector fetch runs as a BullMQ job
+Node.js receives connector config from frontend, enqueues a connector-fetch job in BullMQ/Redis, a dedicated Python worker (Celery or custom) picks it up, fetches data, saves to uploads/raw/, updates the dataset record status, and Node.js polls/webhooks the job status.
+
+Pros
+Non-blocking fetch (correct for large datasets); retries built-in; decoupled from HTTP timeout; observable job queue
+Cons
+Requires Redis; significantly more infrastructure; job status polling/WebSocket needed in frontend; more complex error handling
+Migration complexity
+High
+Scalability
+Excellent
+Operational burden
+High
+Verdict: Correct architecture target for Phase 2/3 when scale demands it. BullMQ already in package.json.
+
+6. Bottleneck Analysis
+Bottleneck	Root cause	Severity	Fix
+Full table SELECT * in DB connectors
+pd.read_sql() no LIMIT
+Critical
+Add LIMIT parameter in fetch(), use chunked reads for large tables
+10k row hard cap in normalizer
+ROW_STORAGE_LIMIT = 10_000
+High
+Cap is for preview only; full data must flow to cleaning pipeline uncapped
+Synchronous fetch() blocking uvicorn workers
+requests, psycopg2 are blocking
+High
+Use async httpx + asyncpg for async connectors, or dedicated thread pool
+Non-UUID dataset IDs
+String-based timestamp IDs
+Critical for integration
+Use uuid.uuid4() for dataset IDs at the connector layer
+No filesystem sharing model
+Connector writes to its own uploads/
+High for integration
+Shared uploads/ mount or object storage
+Two pandas instances for same data
+normalizer + save_raw both process the DataFrame
+Medium
+Call save_raw() before normalize(), share the same DataFrame reference
+iterrows() in normalizer
+Converts each row Python-side
+Medium
+Use df.to_dict(orient='records') for large datasets
+No streaming for large CSV uploads
+file.read() loads entire file into memory
+High
+Stream to temp file, then read with pd.read_csv(chunk_size=...)
+7. Security Review
+Critical gaps in connector platform
+No authentication on any endpoint — anyone who can reach port 8000 can ingest data, enumerate datasets, and delete them. In a multi-tenant context this is a data breach vector. Fix: JWT validation middleware before every route.
+
+Database credentials passed as plain JSON in request body — {"host": "...", "password": "..."} is sent over HTTP and logged by default FastAPI middleware. Fix: HTTPS only, disable request logging of credentials, never log credential payloads.
+
+SSRF via JSON/REST connector — JSONConnector fetches any URL provided in config["url"]. An attacker can point this at internal services (http://localhost:5432, AWS metadata endpoint http://169.254.169.254/latest/meta-data/). Severity: Critical. Fix: URL allowlist/denylist, block RFC 1918 ranges and link-local, validate before fetch.
+
+Service account JSON files uploaded to server — service_account_file (Google credentials) is parsed in memory but should never touch disk or logs. Ensure it never gets logged by FastAPI's default exception handlers.
+
+Dataset IDs are predictable — connector_source_YYYYMMDD_HHMM can be guessed. Combined with no auth, an attacker can enumerate and download any dataset. Fix: UUIDs + auth.
+
+Tenant isolation: none — The connector platform has no notion of company_id. In a DataInsights.ai integration, connectors must be scoped per-tenant: connector configurations, ingested datasets, and credential usage must never cross company boundaries.
+
+MySQL backtick injection — SELECT * FROM \{source}`wheresourceis taken from the server'sSHOW TABLES` response. Safe today but fragile. Use parameterized table identifiers.
+
+Malicious CSV files — No content inspection beyond MIME type. A crafted Excel file with macros, a CSV with formula injection (=CMD|'/C calc'), or a gigabyte CSV disguised as a normal file can all pass through. Fix: file type verification by magic bytes, size check, row count check before normalization.
+
+8. Production Readiness Assessment
+Component	MVP-grade	Reusable immediately	Needs redesign before prod
+BaseConnector ABC
+✓
+✓
+—
+manager.py REGISTRY + CATALOG
+✓
+✓
+—
+Individual connector implementations
+✓
+✓ (with row limits + timeouts)
+Add row limits, parameterized identifiers
+normalizer.normalize()
+✓
+For preview only
+Not for ML pipeline data plane
+storage.save_raw()
+✓
+✓ (path must change)
+Path must align to uploads/raw/
+ingest.py routes
+Partial
+Logic reusable
+Needs auth, UUID IDs, multi-tenant context
+datasets.py routes
+Partial
+Logic reusable
+Needs auth, replace with PostgreSQL-backed
+Connector frontend UI components
+✓
+✓ (merge into main frontend)
+Add auth token injection
+Zustand ingestionStore
+✓
+✓
+Integrate with main auth context
+FastAPI app + CORS
+Partial
+Dev only
+Production CORS, auth, rate limiting
+Filesystem storage
+Dev only
+✗
+Replace with S3/GCS for cloud deploy
+Dataset ID generation
+✗
+✗
+Must be UUID, must register in PostgreSQL
+9. Final Recommendation
+Recommended architecture: Ingestion Gateway (Option D) → Async Worker (Option E)
+Build in two phases.
+
+Phase 1 — Gateway integration (2–3 weeks)
+Goal: Connectors are accessible from DataInsights.ai's existing UI and backend. The connector platform runs as an internal sidecar service behind the main API. Users never talk to FastAPI directly.
+
+[React frontend] → [Express /api/connectors/*] → [FastAPI connector service :8001]
+                                                          ↓
+                                             [raw CSV → uploads/raw/]
+                                             [INSERT INTO datasets (uuid, company_id, ...)]
+                                             [Return datasetId to frontend]
+                                             [Frontend enters cleaning wizard as normal]
+Changes required:
+
+In connector backend (connectors/backend):
+
+Add internal-only auth header check (X-Internal-Token) — a shared secret between Node.js and FastAPI, not user-facing JWT. This prevents direct external access.
+Change _build_dataset_id to str(uuid.uuid4()).
+Change save_raw path from connectors/backend/uploads/raw/ to the shared uploads/raw/ root.
+Remove the save_normalized call from the ingest pipeline (or make it optional). The normalizer output is only needed for the preview step.
+Add a new response field: return the full path of the saved raw CSV alongside the dataset_id.
+Add row-count cap warning but do not truncate the CSV written to disk (truncation only for preview JSON).
+Fix the SSRF risk in JSONConnector.
+In Node.js backend (backend-node):
+
+Add connectorRoutes.js: POST /api/connectors/validate, POST /api/connectors/fetch.
+connectorRoutes.js validates JWT + extracts company_id, user_id.
+Calls FastAPI connector service (via axios or Node native fetch) with the X-Internal-Token header.
+On successful fetch response: calls the existing uploadController logic to insert the dataset record in PostgreSQL with the correct company_id, user_id, dataset_id (UUID from connector service).
+Returns standard { success: true, datasetId } — same shape as POST /api/upload.
+In React frontend (frontend-react):
+
+Add connector UI pages (ImportPage, ConnectPage, PreviewPage) as routes within the existing authenticated layout.
+Move ingestionStore.js (Zustand) into frontend-react/src/store/.
+Update api/client.js to use VITE_API_BASE_URL + inject Authorization header from sessionStorage.
+Add route employees cannot reach connector routes without can_upload permission; admins can.
+Ownership boundary (Phase 1):
+
+┌─────────────────────────────────────────────────────────┐
+│               DataInsights.ai (owns lifecycle)          │
+│                                                         │
+│  React frontend (auth + routing)                        │
+│  Node.js Express (auth + dataset registry + RBAC)       │
+│    └── calls internally ──→                             │
+│         FastAPI connector service (pure data fetch)     │
+│              └── writes raw CSV to shared uploads/      │
+│  PostgreSQL (datasets, permissions, company)            │
+│  Python ml_engine (cleaning + pipeline + chat)          │
+└─────────────────────────────────────────────────────────┘
+The connector service is a dumb fetcher — it knows nothing about tenants, UUIDs, or permissions. All of that stays in Node.js.
+
+Phase 2 — Async worker (4–6 weeks, when scale demands)
+Replace the synchronous HTTP call chain with a job queue:
+
+Frontend → Node.js → BullMQ job → Python connector worker → uploads/raw/ + DB update
+                   → Return job_id + 202 Accepted
+                   → Frontend polls GET /api/jobs/{job_id} or WebSocket
+BullMQ is already in package.json (currently unused).
+Python connector worker uses existing BaseConnector + updated save_raw.
+Each connector type runs in its own queue with per-tenant rate limits.
+Retries, dead-letter queues, job history log visible in admin panel.
+Phase 3 — Object storage (when deploying to cloud / multi-instance)
+Replace local filesystem with S3/GCS:
+
+Connector service writes to object store using boto3 / google-cloud-storage.
+Node.js backend generates signed URLs for downloads, cleaning preview, ML pipeline input.
+DataInsights.ai's uploads/raw/, uploads/cleaned/, uploads/artifacts/ become S3 prefixes.
+What should remain isolated (never merge)
+Component	Keep separate	Reason
+Connector Python virtualenv
+Yes
+Connector deps (psycopg2, pymysql, gspread) should not contaminate ml_engine venv
+FastAPI server process
+Yes (Phase 1+2)
+Different async model; clean crash isolation
+BaseConnector abstraction
+Yes
+Only change: add row limit + async support
+Connector frontend components
+Merge into main frontend
+No reason to keep a separate React app
+normalizer.normalize()
+Keep for preview only
+Not suitable as data-plane serialization
+Connector storage paths
+Merge to shared uploads/
+Alignment is required
+Recommended ingestion lifecycle (integrated)
+1. User opens "Add Data Source" (authenticated, role=admin)
+2. Frontend loads connector gallery via GET /api/connectors (Express → FastAPI CATALOG)
+3. User selects connector, fills credentials
+4. Frontend: POST /api/connectors/validate (Express auth → FastAPI validate)
+   → Returns source list
+5. User selects source: POST /api/connectors/fetch (Express auth → FastAPI fetch)
+   → FastAPI fetches DataFrame, writes UUID-named CSV to shared uploads/raw/
+   → Express inserts dataset record in PostgreSQL (company_id, user_id, status=not_cleaned)
+   → Express returns { datasetId, previewMeta }
+6. Frontend navigates to existing cleaning wizard (/datasets/{id}/clean)
+7. Existing flow: cleaning → finalize → run_pipeline.py → dashboard + AI chat
+This flow reuses 100% of the existing DataInsights.ai pipeline with zero changes to the cleaning wizard, ML engine, chatbot, or dashboard. The connector platform becomes the new alternative entry point alongside file upload — not a replacement.

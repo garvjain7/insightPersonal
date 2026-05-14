@@ -85,9 +85,23 @@ export const approveUser = async (email, approved) => {
 export const uploadDataset = async (file) => {
     const formData = new FormData();
     formData.append('dataset', file);
+    formData.append('connector', 'csv'); // Legacy upload is mapped to CSV connector
+    const response = await api.post('/ingestion/import', formData);
+    return response.data;
+};
 
-    // Let axios set the proper boundary for multipart/form-data
-    const response = await api.post('/upload', formData);
+export const getConnectorCatalog = async () => {
+    const response = await api.get('/ingestion/catalog');
+    return response.data;
+};
+
+export const validateConnectorIngest = async (formData) => {
+    const response = await api.post('/ingestion/validate', formData);
+    return response.data;
+};
+
+export const fetchConnectorIngest = async (formData) => {
+    const response = await api.post('/ingestion/import', formData);
     return response.data;
 };
 

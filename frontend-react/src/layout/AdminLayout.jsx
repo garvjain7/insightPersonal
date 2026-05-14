@@ -12,7 +12,7 @@ const navItems = [
   {
     label: 'Main', items: [
       { path: '/admin', icon: LayoutDashboard, text: 'Dashboard' },
-      { path: '/admin/upload', icon: UploadCloud, text: 'Upload' },
+      { path: '/admin/upload', icon: UploadCloud, text: 'Add data' },
       { path: '/admin/permissions', icon: Shield, text: 'Permissions', badgeKey: 'pending' },
       { path: '/admin/logs', icon: FileText, text: 'Logs' },
     ]

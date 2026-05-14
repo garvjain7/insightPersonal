@@ -299,7 +299,7 @@ export default function AdminDashboard() {
             </div>
             <div style={{ display: 'flex', gap: 8 }}>
               <button className="admin-btn admin-btn-primary admin-btn-sm" onClick={() => navigate('/admin/upload')}>
-                Upload Dataset
+                Add data
               </button>
               <button className="admin-btn admin-btn-ghost admin-btn-sm" onClick={() => navigate('/datasets')}>
                 View All →

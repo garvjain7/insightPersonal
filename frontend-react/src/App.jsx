@@ -47,7 +47,7 @@ export default function App() {
         <Route path="/admin/logs" element={<ProtectedRoute allowedRoles={['admin']}><LogsPage /></ProtectedRoute>} />
         <Route path="/admin/permissions" element={<ProtectedRoute allowedRoles={['admin']}><PermissionPage /></ProtectedRoute>} />
         <Route path="/admin/employees" element={<ProtectedRoute allowedRoles={['admin']}><EmployeesPage /></ProtectedRoute>} />
-        <Route path="/admin/upload" element={<ProtectedRoute allowedRoles={['admin']}><AdminLayout><UploadPage /></AdminLayout></ProtectedRoute>} />
+        <Route path="/admin/upload" element={<ProtectedRoute allowedRoles={['admin']}><AdminLayout title="Add data" subtitle="Connect a source or upload a file—then continue in the cleaning wizard"><UploadPage /></AdminLayout></ProtectedRoute>} />
 
         {/* Data Pipeline (wrapped in MainLayout) */}
         <Route path="/datasets" element={<ProtectedRoute><MainLayout><DatasetsPage /></MainLayout></ProtectedRoute>} />

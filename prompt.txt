@@ -1,0 +1,223 @@
+You are integrating the standalone `connectors/` system into the existing `DataInsights.ai` codebase.
+This is NOT a scalability/refactor task right now.
+Goal is immediate working integration with minimal rewrites while preserving future extensibility.
+
+You must first deeply analyze BOTH systems before coding:
+
+* existing DataInsights.ai upload → dataset → cleaning → pipeline flow
+* standalone connectors system in `/connectors`
+
+The standalone connector platform is NOT a separate product anymore.
+Treat it as:
+
+# the new ingestion entry layer for DataInsights.ai
+
+Current situation:
+
+* DataInsights.ai currently supports only:
+  `Upload File -> Dataset Created -> Cleaning Wizard`
+* We now want:
+  `Connect Data Source -> Dataset Created -> Existing Flow Continues`
+
+VERY IMPORTANT:
+
+* Existing downstream systems must remain unchanged:
+
+  * cleaning wizard
+  * preview
+  * dashboard generation
+  * chatbot
+  * artifacts
+  * permissions
+  * pipeline
+* Do NOT redesign architecture right now.
+* Do NOT introduce queues/microservices/object storage.
+* Do NOT overengineer.
+* Just make integration fully working.
+
+====================================================
+PRIMARY OBJECTIVE
+=================
+
+Replace the current admin upload experience with a connector-based ingestion UI inspired heavily by Microsoft Power BI connector UX (around 90% inspiration), while matching the existing visual style/theme of DataInsights.ai.
+
+The current standalone connector frontend is NOT sufficient.
+
+We DO NOT want:
+
+* standalone preview pages
+* standalone data tables
+* standalone ingestion lifecycle
+
+After successful connector import:
+the app should automatically continue into the EXISTING DataInsights.ai dataset flow exactly like normal uploads already do.
+
+Meaning:
+
+```text
+Connector Import Success
+    ↓
+Dataset Created
+    ↓
+Navigate automatically into existing cleaning/preview flow
+```
+
+The standalone connector preview/data-table pages should NOT become the final flow.
+
+====================================================
+WHAT YOU MUST DO FIRST
+======================
+
+Before coding:
+
+1. Deeply analyze:
+
+   * current upload page/components/routes in frontend-react
+   * upload-related backend routes/controllers
+   * how dataset creation currently works
+   * how cleaning wizard navigation currently works
+   * how uploaded files are stored
+   * how dataset IDs are generated
+   * how frontend redirects after upload success
+
+2. Analyze the standalone connector system:
+
+   * BaseConnector abstraction
+   * manager.py
+   * ingest.py
+   * connector frontend components
+   * connector config catalog
+   * connector API flow
+
+3. Identify:
+
+   * what can be reused directly
+   * what must be adapted
+   * what should be deleted/ignored
+   * where integration boundaries should exist
+
+====================================================
+FRONTEND REQUIREMENTS
+=====================
+
+Build a NEW connector ingestion UI inside the existing DataInsights.ai frontend.
+
+Power BI inspiration is VERY important.
+
+Required UX flow:
+
+```text
+Admin opens "Add Data"
+    ↓
+Connector Gallery
+    ↓
+Search connectors
+    ↓
+Select connector
+    ↓
+Connector setup modal/page
+    ↓
+Credential form
+    ↓
+Source selection
+    ↓
+Import starts
+    ↓
+Success
+    ↓
+Automatically continue into existing DataInsights.ai flow
+```
+
+UI priorities:
+
+* modern
+* extremely clean
+* minimal
+* connector-first UX
+* Power BI inspired layout
+* searchable connector gallery
+* categorized connectors
+* professional ingestion experience
+* match existing DataInsights styling/theme
+* avoid flashy dashboard aesthetics
+
+VERY IMPORTANT:
+Do NOT build:
+
+* standalone preview pages
+* standalone data-table viewer
+* duplicate cleaning pages
+* duplicate dataset pages
+
+Existing DataInsights pages already handle those.
+
+The connector UI should ONLY handle:
+
+```text
+source connection + ingestion
+```
+
+====================================================
+BACKEND REQUIREMENTS
+====================
+
+Integrate connector ingestion into existing backend flow with MINIMAL disruption.
+
+Required result:
+
+* connector fetch saves raw CSV into the SAME raw upload location currently used by DataInsights.ai
+* dataset row created exactly like normal upload flow
+* existing downstream pipeline continues unchanged
+
+The connector system should behave internally like:
+
+```text
+“advanced upload source”
+```
+
+NOT:
+
+```text
+“separate product”
+```
+
+====================================================
+IMPORTANT CONSTRAINTS
+=====================
+
+DO NOT:
+
+* redesign the entire architecture
+* introduce async workers
+* introduce Redis
+* introduce Kubernetes/microservices
+* rewrite ML engine
+* rewrite cleaning pipeline
+* replace filesystem storage
+* implement enterprise scaling concerns now
+
+ONLY:
+
+* integrate
+* simplify
+* adapt
+* make fully working
+
+====================================================
+EXPECTED OUTPUT
+===============
+
+You must provide:
+
+1. Full integration strategy
+2. Exact files to modify
+3. Exact reusable components
+4. Exact connector frontend redesign plan
+5. Exact backend flow adaptation plan
+6. Routing/navigation changes
+7. Dataset creation integration
+8. Folder structure updates
+9. API flow updates
+10. Step-by-step implementation order
+
+Then begin implementation carefully without breaking existing upload flow until connector flow is verified working.
